@@ -13,16 +13,54 @@ Local, privacy-first AI productivity tracker for macOS. Watches your activity, c
 
 ## Quick Start
 
+### Prerequisites (one-time, on a fresh Mac)
+
+Skip this block if you already have Ollama running with `llama3.2-vision`
+pulled and ActivityWatch installed and running.
+
 ```bash
-# 1. Clone and enter the repo
+# Install Ollama and start the daemon. Pick ONE of:
+brew install ollama && brew services start ollama
+#   or: download the Ollama desktop app from https://ollama.com/ and launch it
+
+# Pull the vision model used by focus-monitor (~7.8 GB, one-time download).
+ollama pull llama3.2-vision
+
+# Install ActivityWatch. Pick ONE of:
+brew install --cask activitywatch
+#   or: download from https://activitywatch.net/ and drag to /Applications/
+
+# Launch ActivityWatch so it starts tracking window focus.
+open /Applications/ActivityWatch.app
+```
+
+**macOS Screen Recording permission (required, one-time):**
+
+Before the first run, grant Screen Recording permission to the terminal
+you'll use to launch focus-monitor:
+
+1. Open **System Settings → Privacy & Security → Screen Recording**.
+2. Add your terminal app (Terminal.app, iTerm2, Ghostty, etc.) to the
+   allow-list.
+3. Quit and relaunch the terminal so the permission takes effect.
+
+Without this, `screencapture` produces black PNGs and the AI sees
+nothing.
+
+### Install focus-monitor
+
+```bash
+# 1. Clone and enter the repo.
 git clone https://github.com/tadigotla/focus-monitor.git
 cd focus-monitor
 
-# 2. Run setup: checks dependencies, creates the launchd agent,
-#    and scaffolds ~/.focus-monitor/ with default config.
+# 2. Run setup. This probes Ollama + ActivityWatch, scaffolds
+#    ~/.focus-monitor/ with default config, and writes the launchd plist.
+#    If either service is down or missing, setup prints the exact fix-it
+#    command — re-run setup after fixing.
 python3 setup.py
 
-# 3. Edit your planned tasks (the file exists after step 2).
+# 3. Edit your planned tasks.
 nano ~/.focus-monitor/planned_tasks.json
 
 # 4. Test manually first (also serves the live dashboard).
@@ -38,7 +76,32 @@ launchctl load ~/Library/LaunchAgents/com.focusmonitor.agent.plist
 launchctl unload ~/Library/LaunchAgents/com.focusmonitor.agent.plist
 ```
 
-**One-time macOS permission**: you'll need to grant Screen Recording permission to your terminal (or the Python binary) in **System Settings → Privacy & Security → Screen Recording**. `setup.py` reminds you of this.
+### Verifying your install
+
+After `setup.py` reports everything green and `cli.py run` is alive
+for at least one analysis interval (~30 minutes by default, or edit
+`~/.focus-monitor/config.json` to lower `analysis_interval_sec`), run
+these quick checks:
+
+```bash
+# 1. Ollama is reachable and has the expected model.
+curl -s http://localhost:11434/api/tags | grep llama3.2-vision
+
+# 2. ActivityWatch is reachable and in production mode.
+curl -s http://localhost:5600/api/0/info
+
+# 3. An activity row has landed in the database.
+sqlite3 ~/.focus-monitor/activity.db \
+  "SELECT timestamp, substr(summary, 1, 60) FROM activity_log ORDER BY timestamp DESC LIMIT 5;" \
+  2>/dev/null || echo "No rows yet — wait for the first analysis tick."
+
+# 4. (Optional, for contributors) Run the pytest suite — fully offline,
+#    requires the dev venv set up via the Contributing section below.
+.venv/bin/pytest tests/
+```
+
+If steps 1 and 2 return data but step 3 is empty, `cli.py run` hasn't
+reached its first analysis tick yet — leave it running and try again.
 
 ## How It Works
 
