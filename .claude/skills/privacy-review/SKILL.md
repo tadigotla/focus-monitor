@@ -78,6 +78,53 @@ The dashboard and any other HTTP server in the project must bind to
 - Any firewall or macOS network configuration hints added to the repo that
   imply external access.
 
+### 5. Write endpoint hardening
+
+The dashboard has a read-only surface *and* a plan-management write surface.
+The read surface is safe without auth because it only serves data the user
+could already read. The write surface is *only* safe because every mutation
+passes through a single `_mutate()` choke-point that validates:
+
+- the `Host` header (defends against DNS rebinding),
+- the `Origin` header (defends against cross-origin browser POSTs),
+- a per-request CSRF token from the in-memory `_csrf_tokens` store.
+
+A change that bypasses this choke-point, relaxes it, or adds a new mutation
+path without routing through it is a **P0 finding**, not a style nit. Flag:
+
+- Any new method on `DashboardHandler` other than `do_GET` / `do_POST` that
+  reads from `self.rfile` or mutates on-disk state.
+- Any new entry in `_POST_ROUTES` whose handler does not call `_mutate(...)`
+  before touching files.
+- Any code path inside an existing `_handle_*` method that writes to
+  `planned_tasks.json` / `discovered_activities.json` / the DB / the
+  filesystem *before* the `_mutate` call.
+- Any weakening of the `Host` check (e.g., accepting `*.localhost`, allowing
+  an empty Host, reading the Host from a user-controllable source like
+  `X-Forwarded-Host`).
+- Any weakening of the `Origin` check (e.g., allowing mismatched origins,
+  unconditionally accepting missing Origin when `Referer` is present).
+- Any new `Access-Control-Allow-*` header, any CORS-related logic, any
+  addition of `allow_origin` / `*` wildcarding.
+- Any new cookie-based auth, session storage, or long-lived token scheme
+  (the design deliberately keeps CSRF tokens as the *only* mutation-auth
+  mechanism).
+- Any change to `_issue_csrf_token` or `_consume_csrf_token` that removes
+  the single-use semantics, extends the TTL past 1 hour without a comment
+  explaining why, or skips the `_csrf_lock` acquisition.
+- Any `http://` or `https://` URL referencing `htmx`, `unpkg`, `cdnjs`,
+  `jsdelivr`, or any other CDN outside of `focusmonitor/static/PROVENANCE.md`
+  and its surrounding documentation comments. Vendored libraries come from
+  committed files, not runtime fetches.
+- Any new file under `focusmonitor/static/` that is not listed in
+  `PROVENANCE.md` with a name, upstream URL, version, fetch date, and
+  SHA256.
+- Any new name added to `STATIC_ALLOWLIST` without a matching `PROVENANCE.md`
+  entry.
+- Any `os.path.join(STATIC_DIR, user_input)` or similar pattern that builds
+  a file path from the request. The allowlist-lookup is the entire
+  path-resolution story; introducing path concatenation invites traversal.
+
 ## How to invoke
 
 Ask me: "Run privacy-review on this diff" (with the diff pasted or after a
@@ -101,6 +148,10 @@ Ask me: "Run privacy-review on this diff" (with the diff pasted or after a
 
 ## 4. Loopback bind addresses
 - focusmonitor/dashboard.py:88 — host="0.0.0.0" (was "127.0.0.1")
+- (or: no findings)
+
+## 5. Write endpoint hardening
+- focusmonitor/dashboard.py:340 — new _handle_foo does not call _mutate() (P0)
 - (or: no findings)
 
 ## Summary
