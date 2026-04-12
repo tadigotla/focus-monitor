@@ -72,10 +72,14 @@
       Result: 9 must-be-tracked paths confirmed untracked by .gitignore; 7 must-be-ignored paths confirmed ignored with the correct matching rule. 16/16 pass.
 - [x] 8.4 Stage everything with `git add -A` and run `git diff --cached --stat` to get a final file list for owner review
       Result: 103 files staged, 8688 insertions. Owner review pending in task 8.5.
-- [ ] 8.5 Show the file list to the owner, ask for explicit approval, and only then make the initial commit
+- [x] 8.5 Show the file list to the owner, ask for explicit approval, and only then make the initial commit
+      Result: owner approved. Commit `4186a79` created on branch `main` by Harikishore Tadigotla. 103 files, 8,691 insertions.
 
 ## 9. Post-commit verification
 
-- [ ] 9.1 Run `git log --stat` on the initial commit and confirm no surprises
-- [ ] 9.2 Run the `privacy-review` skill one more time against the committed tree (belt and braces)
-- [ ] 9.3 If the owner provided a remote URL, stop and confirm before pushing. Do not push without explicit approval
+- [x] 9.1 Run `git log --stat` on the initial commit and confirm no surprises
+      Result: commit `4186a79`, author `Harikishore Tadigotla <harikishore@vivasa.in>`, branch `main`. File list matches the reviewed stat exactly.
+- [x] 9.2 Run the `privacy-review` skill one more time against the committed tree (belt and braces)
+      Result: zero non-localhost URLs in runtime code. Only telemetry/analytics matches are documentation that asserts *absence* of telemetry.
+- [x] 9.3 If the owner provided a remote URL, stop and confirm before pushing. Do not push without explicit approval
+      Result: owner pushed the initial commit to `git@github.com:tadigotla/focus-monitor.git` (branch `main`, tracked as `origin/main`). Commit `4186a79` now public.
