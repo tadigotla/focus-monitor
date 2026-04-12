@@ -1,12 +1,13 @@
 """Dashboard HTML generation and HTTP server."""
 
+import html
 import re
 import sqlite3
 import json
 import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
-from focusmonitor.config import DB_PATH
+from focusmonitor.config import DB_PATH, DISCOVERED_FILE
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -87,6 +88,31 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   .tag.project { background: #1e3a5f; color: #60a5fa; }
   .tag.distraction { background: #4a1c1c; color: #f87171; }
   .tag.planned { background: #1a3a2a; color: #34d399; }
+  .discovered-list { list-style: none; display: flex; flex-direction: column; gap: 0.9rem; }
+  .discovered-entry {
+    padding: 0.9rem 0;
+    border-bottom: 1px solid #27272a;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.4rem 1rem;
+    align-items: baseline;
+  }
+  .discovered-entry:last-child { border: none; padding-bottom: 0; }
+  .discovered-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.95rem;
+    color: #fafafa;
+  }
+  .discovered-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: #71717a;
+    text-align: right;
+  }
+  .discovered-seen { font-size: 0.72rem; color: #52525b; grid-column: 1 / -1; margin-top: -0.3rem; }
+  .discovered-signals { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+  .tag.signal { background: #27272a; color: #a1a1aa; }
+  .tag.promoted { background: #1a3a2a; color: #34d399; }
   .nudge-list { list-style: none; }
   .nudge-list li {
     padding: 0.5rem 0;
@@ -127,6 +153,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <h1 style="margin-bottom:1rem;">Timeline</h1>
   <div class="timeline">
     TIMELINE_HTML
+  </div>
+
+  <h1 style="margin-top:2rem; margin-bottom:1rem;">Discovered Activities</h1>
+  <div class="card">
+    DISCOVERED_HTML
   </div>
 
   <h1 style="margin-top:2rem; margin-bottom:1rem;">Recent Nudges</h1>
@@ -188,12 +219,62 @@ def _try_parse_json(text):
     return result if result else None
 
 
+def _load_discovered_activities():
+    """Return activities from discovered_activities.json, newest last_seen first.
+
+    Returns [] for any read/parse error so a malformed user-editable file
+    cannot take the dashboard down.
+    """
+    try:
+        data = json.loads(DISCOVERED_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    activities = data.get("activities", []) if isinstance(data, dict) else []
+    if not isinstance(activities, list):
+        return []
+    return sorted(activities, key=lambda a: a.get("last_seen", ""), reverse=True)
+
+
+def _format_seen(ts):
+    if not ts:
+        return "?"
+    try:
+        return datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ts
+
+
+def _render_discovered_html(activities):
+    if not activities:
+        return '<div class="empty">No activities discovered yet.</div>'
+    items = []
+    for act in activities:
+        name = html.escape(str(act.get("name", "?")))
+        count = int(act.get("count", 0) or 0)
+        first_seen = html.escape(_format_seen(act.get("first_seen")))
+        last_seen = html.escape(_format_seen(act.get("last_seen")))
+        promoted_badge = '<span class="tag promoted">★ promoted</span>' if act.get("promoted") else ""
+        signals = act.get("sample_signals", []) or []
+        signal_pills = "".join(
+            f'<span class="tag signal">{html.escape(str(s))}</span>' for s in signals
+        )
+        items.append(f"""
+        <li class="discovered-entry">
+          <div class="discovered-name">{name} {promoted_badge}</div>
+          <div class="discovered-meta">seen {count}×</div>
+          <div class="discovered-seen">first {first_seen} · last {last_seen}</div>
+          <div class="discovered-signals">{signal_pills}</div>
+        </li>""")
+    return f'<ul class="discovered-list">{"".join(items)}</ul>'
+
+
 def build_dashboard(refresh_sec=0):
     """Build dashboard HTML and return it as a string."""
     if not DB_PATH.exists():
         return None
 
     db = sqlite3.connect(str(DB_PATH))
+    db.execute("PRAGMA busy_timeout = 5000")
     today = datetime.now().strftime("%Y-%m-%d")
 
     rows = db.execute(
@@ -300,6 +381,8 @@ def build_dashboard(refresh_sec=0):
     html = html.replace("NUDGE_COUNT", str(len(nudge_rows)))
     html = html.replace("TOP_APPS_HTML", apps_html)
     html = html.replace("TIMELINE_HTML", timeline)
+    discovered_html = _render_discovered_html(_load_discovered_activities())
+    html = html.replace("DISCOVERED_HTML", discovered_html)
     html = html.replace("NUDGES_HTML", nudges_html)
 
     db.close()

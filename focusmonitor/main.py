@@ -1,12 +1,25 @@
 """Main loop and startup."""
 
 import time
+from datetime import datetime, timezone
 from focusmonitor.config import load_config, TASKS_JSON_FILE, DISCOVERED_FILE
 from focusmonitor.db import init_db
 from focusmonitor.screenshots import take_screenshot
 from focusmonitor.analysis import run_analysis
+from focusmonitor.activitywatch import get_afk_state
 from focusmonitor.cleanup import run_cleanup
 from focusmonitor.tasks import load_planned_tasks
+
+
+def should_skip_tick(cfg):
+    state = get_afk_state(cfg)
+    if state["status"] != "afk":
+        return False
+    since = state["since"]
+    if since is None:
+        return False
+    elapsed = (datetime.now(timezone.utc) - since).total_seconds()
+    return elapsed >= cfg["idle_skip_grace_sec"]
 
 
 def main():
@@ -23,6 +36,7 @@ def main():
     print("=" * 60)
     print(f"  Screenshots every {cfg['screenshot_interval_sec']}s")
     print(f"  Analysis every {cfg['analysis_interval_sec']}s")
+    print(f"  Idle skip grace: {cfg['idle_skip_grace_sec']}s")
     print(f"  Nudge threshold: {cfg['nudge_after_hours']}h")
     print(f"  Planned tasks: {TASKS_JSON_FILE}")
     print(f"  Discovered activities: {DISCOVERED_FILE}")
@@ -51,21 +65,40 @@ def main():
 
     last_screenshot = 0
     last_analysis = 0
+    was_idle = False
 
     try:
         while True:
             now = time.time()
 
-            if now - last_screenshot >= cfg["screenshot_interval_sec"]:
-                path = take_screenshot()
-                if path:
-                    print(f"📸 Screenshot: {path.name}")
-                last_screenshot = now
+            screenshot_due = now - last_screenshot >= cfg["screenshot_interval_sec"]
+            analysis_due = now - last_analysis >= cfg["analysis_interval_sec"]
 
-            if now - last_analysis >= cfg["analysis_interval_sec"]:
-                run_analysis(cfg, db)
-                run_cleanup(cfg, db)
-                last_analysis = now
+            if screenshot_due or analysis_due:
+                if should_skip_tick(cfg):
+                    if not was_idle:
+                        print("💤 idle — skipping capture")
+                    was_idle = True
+                    if screenshot_due:
+                        last_screenshot = now
+                    if analysis_due:
+                        # Cleanup keeps running during idle stretches — it's
+                        # about disk hygiene, not activity capture.
+                        run_cleanup(cfg, db)
+                        last_analysis = now
+                else:
+                    if was_idle:
+                        print("▶️  resumed")
+                    was_idle = False
+                    if screenshot_due:
+                        path = take_screenshot()
+                        if path:
+                            print(f"📸 Screenshot: {path.name}")
+                        last_screenshot = now
+                    if analysis_due:
+                        run_analysis(cfg, db)
+                        run_cleanup(cfg, db)
+                        last_analysis = now
 
             time.sleep(5)
 

@@ -29,6 +29,10 @@ DEFAULT_CONFIG = {
     "dashboard_refresh_sec": 60,
     "db_retention_days": 30,
     "log_max_size_mb": 5,
+    # Seconds of continuous AFK (per ActivityWatch) before the main loop
+    # skips screenshot + analysis ticks. Set very large (e.g. 86400) to
+    # effectively disable the gate; set to 0 to skip immediately on AFK.
+    "idle_skip_grace_sec": 60,
 }
 
 DEFAULT_PLANNED_TASKS = [

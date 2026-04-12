@@ -70,6 +70,10 @@ def update_discovered_activities(projects, top_titles):
             merged = old_signals | current_signals
             existing["sample_signals"] = list(merged)[:10]
         else:
+            # Make room before appending so the new entry is never a candidate
+            # for immediate eviction (matters when all existing entries are
+            # promoted — see openspec activity-discovery "All entries promoted").
+            _evict_over(activities, MAX_DISCOVERED - 1)
             activities.append({
                 "name": project_name,
                 "first_seen": now,
@@ -79,16 +83,19 @@ def update_discovered_activities(projects, top_titles):
                 "promoted": False,
             })
 
-    while len(activities) > MAX_DISCOVERED:
+    data["activities"] = activities
+    DISCOVERED_FILE.write_text(json.dumps(data, indent=2))
+
+
+def _evict_over(activities, limit):
+    """Shrink activities in-place to `limit` entries, preferring non-promoted."""
+    while len(activities) > limit:
         non_promoted = [a for a in activities if not a.get("promoted")]
         if non_promoted:
             oldest = min(non_promoted, key=lambda a: a.get("last_seen", ""))
         else:
             oldest = min(activities, key=lambda a: a.get("last_seen", ""))
         activities.remove(oldest)
-
-    data["activities"] = activities
-    DISCOVERED_FILE.write_text(json.dumps(data, indent=2))
 
 
 def _task_matches_projects(task, recent_projects):

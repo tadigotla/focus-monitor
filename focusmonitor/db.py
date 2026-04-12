@@ -6,6 +6,7 @@ from focusmonitor.config import DB_PATH
 
 def init_db():
     db = sqlite3.connect(str(DB_PATH))
+    db.execute("PRAGMA busy_timeout = 5000")
     db.execute("""
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
