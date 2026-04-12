@@ -1,0 +1,4 @@
+{
+  "_comment": "Intentionally empty. See CLAUDE.md (Network policy): focus-monitor forbids non-localhost traffic. Adding an MCP server here requires updating CLAUDE.md AND adding a 'Privacy impact' section to the openspec proposal that introduces it.",
+  "mcpServers": {}
+}

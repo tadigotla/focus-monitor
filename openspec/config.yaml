@@ -1,0 +1,31 @@
+schema: spec-driven
+
+context: |
+  focus-monitor is a local, privacy-first AI productivity tracker for macOS
+  (Apple Silicon). ActivityWatch and Ollama run on localhost; all user data
+  lives in ~/.focus-monitor/. Python 3.10+. The top-level invariant is that
+  no data leaves the user's Mac — only localhost / 127.0.0.1 traffic is
+  permitted. See CLAUDE.md at the repo root for the full agent guidance,
+  style rules, and network policy. Proposals, designs, and specs should all
+  be read through this lens: privacy invariants beat ergonomics when they
+  conflict.
+
+rules:
+  proposal:
+    - |
+      If the change introduces a new dependency, API call, or configuration
+      that targets any host other than localhost / 127.0.0.1 (including
+      package installs from non-local indexes, telemetry, auto-update, cloud
+      LLM calls, or MCP servers that reach the network), the proposal MUST
+      include a "Privacy impact" section that explicitly names what leaves
+      the machine, why it is necessary, and how the user is informed and can
+      opt out. Changes without this section when one is required must be
+      rejected.
+    - Keep proposals focused on why and what; implementation details belong in design.md.
+  design:
+    - |
+      When a design introduces a new external call or dependency, include an
+      explicit row in the Risks / Trade-offs section covering the privacy
+      implication, even if the proposal already has a Privacy impact section.
+  tasks:
+    - Break tasks into chunks a single session can finish; each task must be verifiable.

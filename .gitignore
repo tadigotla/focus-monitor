@@ -1,0 +1,66 @@
+# focus-monitor .gitignore
+#
+# Organized by class of file, not by filename that happens to exist today.
+# If you need to track something that lives under an ignored path, add a
+# more specific un-ignore (`!path/to/file`) rather than removing a rule.
+
+# ---- Python build artifacts ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- macOS ----
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+
+# ---- Editors ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.nova/
+.zed/
+
+# ---- Agent tool per-user state ----
+# Keep .claude/settings.json, hooks/, and skills/ committed — those are shared
+# developer tooling documented in CLAUDE.md. Only per-user local overrides and
+# persistent memory are ignored here.
+.claude/settings.local.json
+.claude/memory/
+.claude/**/*.local.*
+.claude/.session/
+
+# ---- Runtime data leakage guard ----
+# The real runtime dir is ~/.focus-monitor/ (outside the repo). This rule
+# catches the case where someone symlinks or copies it in.
+.focus-monitor/
+
+# ---- Logs and temp ----
+*.log
+*.tmp
+tmp/
+
+# ---- Secrets, just in case ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
