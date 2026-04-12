@@ -221,6 +221,106 @@ test("count incremented to 2", entry["count"] == 2)
 test("new signal merged in", "VS Code" in entry["sample_signals"])
 
 
+# ── Scenario: planned tasks filtered from discoveries ───────────────────────
+# openspec change: filter-planned-tasks-from-discoveries
+print("\n== Planned-task filtering ==")
+
+PLAN = [{"name": "Focus Monitor", "signals": [], "apps": [], "notes": ""}]
+
+# Exact-name match is filtered; non-matching project is kept.
+reset_file()
+tasks_mod.update_discovered_activities(
+    ["Focus Monitor", "Sanskrit Tool"],
+    ["Focus Monitor — VS Code"],
+    planned_tasks=PLAN,
+)
+data = json.loads(DF.read_text())
+names = [a["name"] for a in data["activities"]]
+test("planned name dropped", "Focus Monitor" not in names)
+test("non-planned name kept", "Sanskrit Tool" in names)
+
+# Case-insensitive match is filtered.
+reset_file()
+tasks_mod.update_discovered_activities(
+    ["focus monitor"],
+    ["focus monitor"],
+    planned_tasks=PLAN,
+)
+test("lowercase planned name dropped → no file write", not DF.exists())
+
+# Substring is NOT a match (should be written normally).
+reset_file()
+tasks_mod.update_discovered_activities(
+    ["Sanskrit Tooling Dashboard"],
+    ["Sanskrit Tooling Dashboard"],
+    planned_tasks=[{"name": "Sanskrit", "signals": [], "apps": [], "notes": ""}],
+)
+data = json.loads(DF.read_text())
+test("substring match NOT filtered",
+     any(a["name"] == "Sanskrit Tooling Dashboard" for a in data["activities"]))
+
+# Empty / None planned_tasks disables filtering.
+reset_file()
+tasks_mod.update_discovered_activities(
+    ["Focus Monitor"],
+    ["Focus Monitor"],
+)
+data = json.loads(DF.read_text())
+test("None planned_tasks → no filtering",
+     any(a["name"] == "Focus Monitor" for a in data["activities"]))
+
+reset_file()
+tasks_mod.update_discovered_activities(
+    ["Focus Monitor"],
+    ["Focus Monitor"],
+    planned_tasks=[],
+)
+data = json.loads(DF.read_text())
+test("empty planned_tasks → no filtering",
+     any(a["name"] == "Focus Monitor" for a in data["activities"]))
+
+# All projects match plan → no-op, existing file unchanged.
+seeded = {"activities": [{
+    "name": "preexisting",
+    "first_seen": "2026-04-01T10:00:00",
+    "last_seen": "2026-04-01T10:00:00",
+    "count": 1,
+    "sample_signals": ["Chrome"],
+    "promoted": False,
+}]}
+DF.write_text(json.dumps(seeded))
+before = DF.read_text()
+tasks_mod.update_discovered_activities(
+    ["Focus Monitor"],
+    ["Focus Monitor"],
+    planned_tasks=PLAN,
+)
+after = DF.read_text()
+test("all-match → file unchanged", before == after)
+
+# Upsert still works when a non-matching project is already in the file.
+reset_file()
+DF.write_text(json.dumps({"activities": [{
+    "name": "Sanskrit Tool",
+    "first_seen": "2026-04-01T10:00:00",
+    "last_seen": "2026-04-01T10:00:00",
+    "count": 3,
+    "sample_signals": ["Chrome"],
+    "promoted": False,
+}]}))
+tasks_mod.update_discovered_activities(
+    ["Focus Monitor", "Sanskrit Tool"],
+    ["Sanskrit Tool — VS Code"],
+    planned_tasks=PLAN,
+)
+data = json.loads(DF.read_text())
+entry = [a for a in data["activities"] if a["name"] == "Sanskrit Tool"][0]
+test("upsert with filter → count incremented", entry["count"] == 4)
+test("upsert with filter → signal merged", "VS Code" in entry["sample_signals"])
+test("upsert with filter → planned name still dropped",
+     not any(a["name"] == "Focus Monitor" for a in data["activities"]))
+
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 config_mod.DISCOVERED_FILE = original_discovered
 tasks_mod.DISCOVERED_FILE = original_discovered

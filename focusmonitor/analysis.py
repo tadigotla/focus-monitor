@@ -253,6 +253,8 @@ def run_analysis(cfg, db):
                   "distractions": [], "focus_score": -1}
     result = validate_analysis_result(result)
 
+    # project_detected is the raw LLM output for forensic trace; planned-task
+    # filtering happens downstream in update_discovered_activities.
     db.execute("""
         INSERT INTO activity_log (timestamp, window_titles, apps_used,
             project_detected, is_distraction, summary, raw_response)
@@ -274,7 +276,7 @@ def run_analysis(cfg, db):
     if result["distractions"]:
         print(f"  ⚠️  Distractions: {', '.join(result['distractions'])}")
 
-    update_discovered_activities(result["projects"], top_titles)
+    update_discovered_activities(result["projects"], top_titles, tasks)
     check_nudges(cfg, db, result)
 
     return result

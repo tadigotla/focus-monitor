@@ -31,8 +31,19 @@ def load_planned_tasks():
         return []
 
 
-def update_discovered_activities(projects, top_titles):
-    """Upsert detected projects into discovered_activities.json."""
+def update_discovered_activities(projects, top_titles, planned_tasks=None):
+    """Upsert detected projects into discovered_activities.json.
+
+    Drops any project whose name case-insensitively matches a planned task.
+    `activity_log.project_detected` is NOT filtered — that column keeps the
+    raw LLM output for forensic purposes. See openspec change
+    `filter-planned-tasks-from-discoveries` for rationale.
+    """
+    if not projects:
+        return
+
+    blocked = {t["name"].lower() for t in (planned_tasks or []) if t.get("name")}
+    projects = [p for p in projects if p and p.lower() not in blocked]
     if not projects:
         return
 
