@@ -108,14 +108,17 @@ That removes every byte Focus Monitor has stored about you.
 - **Agent guidance**: read [CLAUDE.md](CLAUDE.md) at the repo root. It documents the privacy invariant, the macOS/Python targets, the module layout, and the network policy enforced by the PreToolUse hook at [.claude/hooks/block-network.sh](.claude/hooks/block-network.sh).
 - **Change workflow**: this repo uses [openspec](openspec/) for spec-driven changes. New work lives under `openspec/changes/<name>/`. Archived changes are under `openspec/changes/archive/`.
 - **Agent skills**: project-local skills under [.claude/skills/](.claude/skills/) — `privacy-review` audits diffs for privacy regressions, `test-focusmonitor` runs the test suite.
-- **Running tests**: there is no test framework. Each root-level `test_*.py` is executed directly:
+- **Running tests**: tests live under [tests/](tests/) and run via pytest inside a local dev venv. One-time setup:
   ```bash
-  python3 test_analysis.py
-  python3 test_cleanup.py
-  python3 test_structured_tasks.py
+  python3 -m venv .venv
+  .venv/bin/pip install -r requirements-dev.txt
   ```
-  If you want to add a framework (pytest, unittest), propose it as an openspec change first.
-- **Dependencies**: pure standard library. Please do not introduce third-party runtime dependencies without an explicit design discussion — see the "Privacy impact" rule in [openspec/config.yaml](openspec/config.yaml).
+  Day-to-day:
+  ```bash
+  .venv/bin/pytest tests/
+  ```
+  Tests are strictly offline at runtime — `pytest-socket` blocks every non-loopback connection, and cassette-backed tests for Ollama and ActivityWatch replay from committed vcrpy fixtures under `tests/cassettes/`. See `.claude/skills/test-focusmonitor/SKILL.md` for the cassette re-record sub-workflow.
+- **Runtime dependencies**: pure standard library. Test-only dependencies live in [requirements-dev.txt](requirements-dev.txt) and are never imported by `focusmonitor/` runtime code. Please do not introduce third-party runtime dependencies without an explicit design discussion — see the "Privacy impact" rule in [openspec/config.yaml](openspec/config.yaml).
 
 ## License
 

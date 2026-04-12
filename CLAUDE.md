@@ -8,7 +8,7 @@ comments, not here.
 
 A local, privacy-first AI productivity tracker for macOS. It watches your activity
 via ActivityWatch, takes periodic screenshots, and asks a locally-running Ollama
-model (`llava` by default) to classify the activity against your planned tasks.
+model (`llama3.2-vision` by default) to classify the activity against your planned tasks.
 
 Everything runs on the user's Mac. **No data leaves the machine.** This is the
 entire product promise — treat it as a hard invariant, not a nice-to-have.
@@ -28,22 +28,89 @@ entire product promise — treat it as a hard invariant, not a nice-to-have.
   `activitywatch.py`, `analysis.py`, `cleanup.py`, `config.py`, `dashboard.py`,
   `db.py`, `main.py`, `nudges.py`, `ollama.py`, `screenshots.py`, `tasks.py`.
 - `monitor.py`, `dashboard.py`, `cli.py`, `setup.py` — top-level entrypoints.
-- `test_*.py` at the repo root — tests run directly via `python3 <file>`. There is
-  no pytest, no unittest discovery, no test framework. If you want to add one,
-  propose it as an openspec change first.
+- `tests/` — pytest suite. Subdirectory layout:
+  - `tests/test_*.py` — test files (pytest discovers these)
+  - `tests/conftest.py` — `tmp_home`, `freeze_clock`, `pytest-socket` guard
+  - `tests/fixtures/` — reusable fixtures (db, ollama, activitywatch)
+  - `tests/cassettes/{ollama,activitywatch}/` — committed vcrpy cassettes
+  - `tests/__snapshots__/` — committed syrupy dashboard HTML snapshots
+  - `tests/data/` — deterministic PNG and task fixtures
+- `scripts/seed_aw_fixture_buckets.py` — seeds the testing aw-server
+  (`--testing` mode on `:5666`) with deterministic fixture buckets; used
+  only during cassette re-records.
 - `~/.focus-monitor/` — user data: `config.json`, `planned_tasks.txt`, the
   SQLite DB, the screenshot cache. Never hardcode this path; read it from
-  `focusmonitor.config`.
+  `focusmonitor.config`. Tests **never** touch the real dir — the
+  `tmp_home` fixture in `tests/conftest.py` redirects every config path
+  into a per-test `tmp_path`.
+
+## Tests and dev environment
+
+Tests run via pytest inside a local `.venv`. First-time setup (one-time
+online install, developer-machine action only — never invoked by
+runtime):
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+```
+
+Day-to-day:
+
+```
+.venv/bin/pytest tests/
+```
+
+Hard rules:
+
+- **Offline-at-runtime is enforced, not a convention.** `pytest-socket`
+  is wired via `pyproject.toml` with `--disable-socket` +
+  `--allow-hosts=127.0.0.1,localhost,::1`. Any test that inadvertently
+  reaches a non-loopback host fails loudly with
+  `SocketConnectBlockedError`. `tests/conftest.py` also guards against
+  accidental removal of the flag.
+- **`focusmonitor/` runtime code imports nothing from `requirements-dev.txt`.**
+  Dev deps (pytest, vcrpy, hypothesis, syrupy, freezegun, coverage,
+  pytest-socket) are dev-only. The "prefer stdlib" default still applies
+  to runtime code; the pytest ecosystem is the tooling-layer exception.
+- **Cassette-backed tests replay from committed fixtures.** `tests/cassettes/`
+  holds real HTTP recordings from local Ollama and a testing ActivityWatch
+  instance. A fresh clone runs the full suite offline after install — no
+  capture step required.
+- **Re-recording cassettes is an explicit sub-workflow**, not a default.
+  Trigger only when bumping the Ollama model, upgrading ActivityWatch,
+  or investigating an upstream-drift failure. See
+  `.claude/skills/test-focusmonitor/SKILL.md` for the step-by-step flow.
+- **Cassettes must never contain personal data.** Ollama cassettes are
+  captured against the PNG fixtures under `tests/data/screenshots/`.
+  ActivityWatch cassettes are captured against `aw-server --testing`
+  (port 5666, isolated database) seeded from `scripts/seed_aw_fixture_buckets.py`
+  — never against production AW. Privacy-review every new cassette diff
+  before committing.
+- **Dashboard snapshots are full-page HTML.** `syrupy` asserts that
+  `build_dashboard()` output is byte-identical to
+  `tests/__snapshots__/test_dashboard.ambr`. Update with
+  `pytest --snapshot-update` only when you've intentionally changed the
+  template, and include the snapshot diff in the same PR as the change.
 
 ## Network policy (the important part)
 
 Only `localhost` and `127.0.0.1` may be contacted. That means:
 
-- ActivityWatch on `http://localhost:5600/` — OK.
+- ActivityWatch on `http://localhost:5600/` (production) or
+  `http://localhost:5666/` (`aw-server --testing`) — OK.
 - Ollama on `http://127.0.0.1:11434/` (or via the `ollama` CLI) — OK.
 - **Anything else — not OK**, including package installs, telemetry, auto-update
   checks, error reporting, cloud LLM calls, and "just pulling down a quick
   dependency." If a task seems to require one, stop and ask.
+
+There is **one documented exception**: the one-time dev-venv install
+(`pip install -r requirements-dev.txt`) pulls from PyPI. This is a
+developer-machine setup action, never invoked by focus-monitor itself,
+and after it completes every test run is strictly offline (enforced by
+`pytest-socket`). Treat it as a privacy-reviewable event: approve the
+hook prompt explicitly, expect it exactly once per clone, never script
+it.
 
 `.claude/settings.json` wires a `PreToolUse` hook
 (`.claude/hooks/block-network.sh`) that blocks `Bash` commands matching
@@ -68,7 +135,9 @@ Two skills live under `.claude/skills/` and should be used where they fit:
 - `privacy-review` — before committing a change, run this over the diff to
   catch privacy regressions (non-localhost URLs, new outbound-HTTP imports,
   weaker screenshot retention, 127.0.0.1 rebinds).
-- `test-focusmonitor` — runs the `test_*.py` files at the repo root.
+- `test-focusmonitor` — runs the pytest suite inside `.venv` and reports
+  results. Also hosts the cassette re-record sub-workflow for Ollama and
+  ActivityWatch, with step-by-step privacy-review instructions.
 
 Everything else should go through base Claude behavior. Don't add more skills
 unless the workflow is genuinely unique to this repo.

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "focus-monitor",
+    "signals": ["focus-monitor", "focusmonitor", "activitywatch"],
+    "apps": ["Terminal", "Code", "iTerm2"],
+    "notes": "Work on the focus-monitor project itself."
+  },
+  {
+    "name": "Deep Reading",
+    "signals": ["paper.pdf", "arxiv", "Kindle"],
+    "apps": ["Preview", "Kindle", "Safari"],
+    "notes": "Long-form reading of technical material."
+  }
+]

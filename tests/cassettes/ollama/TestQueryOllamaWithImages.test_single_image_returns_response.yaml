@@ -1,0 +1,46 @@
+# vcrpy cassette — DO NOT hand-edit except to remove personal data.
+#
+# capture_date: 2026-04-12
+# service: ollama
+# ollama_version: 0.20.5
+# model: llama3.2-vision:latest
+# model_digest: prefix see `ollama show llama3.2-vision` at re-record time
+# model_params: 10.7B, Q4_K_M, family=mllama
+# captured_against: http://localhost:11434
+#
+# Re-record triggers: model bump, Ollama upgrade, upstream shape change.
+# Re-record cmd:      pytest --record-mode=rewrite -k <test_name>
+# See tests/cassettes/README.md for the full re-record + review workflow.
+interactions:
+- request:
+    body: '{"model": "llama3.2-vision", "prompt": "What color is this pixel? One word.",
+      "stream": false, "images": ["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"]}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '202'
+      Content-Type:
+      - application/json
+      Host:
+      - localhost:11434
+      User-Agent:
+      - Python-urllib/3.13
+    method: POST
+    uri: http://localhost:11434/api/generate
+  response:
+    body:
+      string: '{"model":"llama3.2-vision","created_at":"2026-04-12T16:03:25.56918Z","response":"Red.","done":true,"done_reason":"stop","context":[128006,882,128007,271,58,1931,12,15,60,3923,1933,374,420,13252,30,3861,3492,13,128009,128006,78191,128007,271,6161,13],"total_duration":16837266333,"load_duration":90845500,"prompt_eval_count":19,"prompt_eval_duration":706873708,"eval_count":3,"eval_duration":235623501}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '401'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 12 Apr 2026 16:03:25 GMT
+    status:
+      code: 200
+      message: OK
+version: 1

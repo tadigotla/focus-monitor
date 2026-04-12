@@ -1,0 +1,17 @@
+# Dev-only dependencies for the focus-monitor test harness.
+#
+# These are installed into a local .venv and never imported by runtime code.
+# See CLAUDE.md for the offline-at-runtime invariant and cassette workflow.
+#
+# Pinned exact versions so cassette captures and snapshots stay reproducible.
+# Bumping a pin is a deliberate PR — expect to re-record cassettes and re-
+# accept snapshots when you do.
+
+pytest==8.3.3
+pytest-recording==0.13.2
+pytest-socket==0.7.0
+vcrpy==6.0.2
+hypothesis==6.115.5
+syrupy==4.7.2
+coverage==7.6.4
+freezegun==1.5.1

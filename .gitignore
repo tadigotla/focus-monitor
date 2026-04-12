@@ -20,6 +20,11 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 
 # ---- macOS ----
 .DS_Store

@@ -1,0 +1,138 @@
+# vcrpy cassette — DO NOT hand-edit except to remove personal data.
+#
+# capture_date: 2026-04-12
+# service: activitywatch
+# aw_version: v0.13.2 (testing mode)
+# captured_against: http://localhost:5666 (aw-server --testing)
+# fixture_bucket: aw-watcher-window_test-fixture, aw-watcher-afk_test-fixture
+# hostname_in_fixture: test-fixture
+# frozen_clock: 2026-04-12T15:00:00 UTC
+#
+# The testing aw-server is an isolated instance seeded with synthetic
+# fixture events — no data from the developer's live ActivityWatch
+# (:5600) touches this cassette. All apps / titles / statuses are
+# hand-written strings ("fixture-editor", etc).
+#
+# Re-record triggers: AW version bump, schema change, new test added to
+# the class.
+# Re-record cmd:      1. aw-server --testing  (binds :5666)
+#                     2. python3 scripts/seed_aw_fixture_buckets.py
+#                     3. pytest --record-mode=rewrite -k <test_name>
+# See tests/cassettes/README.md for the full re-record + review workflow.
+interactions:
+- request:
+    body: null
+    headers:
+      Connection:
+      - close
+      Host:
+      - localhost:5666
+      User-Agent:
+      - Python-urllib/3.13
+    method: GET
+    uri: http://localhost:5666/api/0/buckets
+  response:
+    body:
+      string: '<!doctype html>
+
+        <html lang=en>
+
+        <title>Redirecting...</title>
+
+        <h1>Redirecting...</h1>
+
+        <p>You should be redirected automatically to the target URL: <a href="http://localhost:5666/api/0/buckets/">http://localhost:5666/api/0/buckets/</a>.
+        If not, click the link.
+
+        '
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '259'
+      Content-Type:
+      - text/html; charset=utf-8
+      Date:
+      - Sun, 12 Apr 2026 16:13:38 GMT
+      Location:
+      - http://localhost:5666/api/0/buckets/
+      Server:
+      - Werkzeug/2.3.7 Python/3.9.13
+    status:
+      code: 308
+      message: PERMANENT REDIRECT
+- request:
+    body: null
+    headers:
+      Connection:
+      - close
+      Host:
+      - localhost:5666
+      User-Agent:
+      - Python-urllib/3.13
+    method: GET
+    uri: http://localhost:5666/api/0/buckets/
+  response:
+    body:
+      string: "{\n    \"aw-watcher-window_test-fixture\": {\n        \"id\": \"aw-watcher-window_test-fixture\",\n
+        \       \"created\": \"2026-04-12T12:10:49.824771+00:00\",\n        \"name\":
+        null,\n        \"type\": \"currentwindow\",\n        \"client\": \"aw-watcher-window\",\n
+        \       \"hostname\": \"test-fixture\",\n        \"data\": {},\n        \"last_updated\":
+        \"2026-04-12T14:59:00+00:00\"\n    },\n    \"aw-watcher-afk_test-fixture\":
+        {\n        \"id\": \"aw-watcher-afk_test-fixture\",\n        \"created\":
+        \"2026-04-12T12:10:49.838950+00:00\",\n        \"name\": null,\n        \"type\":
+        \"afkstatus\",\n        \"client\": \"aw-watcher-afk\",\n        \"hostname\":
+        \"test-fixture\",\n        \"data\": {},\n        \"last_updated\": \"2026-04-12T15:00:00+00:00\"\n
+        \   }\n}\n"
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '694'
+      Content-Type:
+      - application/json
+      Date:
+      - Sun, 12 Apr 2026 16:13:38 GMT
+      Server:
+      - Werkzeug/2.3.7 Python/3.9.13
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"query": ["events = query_bucket(\"aw-watcher-afk_test-fixture\");", "RETURN
+      = events;"], "timeperiods": ["2026-04-12T14:50:00+00:00/2026-04-12T15:00:00+00:00"]}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '162'
+      Content-Type:
+      - application/json
+      Host:
+      - localhost:5666
+      User-Agent:
+      - Python-urllib/3.13
+    method: POST
+    uri: http://localhost:5666/api/0/query/
+  response:
+    body:
+      string: "[\n  [\n    {\n      \"data\": {\n        \"status\": \"afk\"\n      },\n
+        \     \"duration\": 300.0,\n      \"id\": 6,\n      \"timestamp\": \"2026-04-12T14:55:00+00:00\"\n
+        \   },\n    {\n      \"data\": {\n        \"status\": \"not-afk\"\n      },\n
+        \     \"duration\": 300.0,\n      \"id\": 5,\n      \"timestamp\": \"2026-04-12T14:50:00+00:00\"\n
+        \   }\n  ]\n]\n"
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '313'
+      Content-Type:
+      - application/json
+      Date:
+      - Sun, 12 Apr 2026 16:13:38 GMT
+      Server:
+      - Werkzeug/2.3.7 Python/3.9.13
+    status:
+      code: 200
+      message: OK
+version: 1

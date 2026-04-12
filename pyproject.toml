@@ -1,0 +1,43 @@
+# pyproject.toml — pytest and dev-tool config only.
+#
+# focus-monitor is not distributed as a package. This file exists solely to
+# configure dev tooling (pytest, coverage, hypothesis) in one canonical place.
+# Runtime code has no build-system dependency and is imported directly from
+# the focusmonitor/ source tree.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# --disable-socket         : pytest-socket blocks every outbound socket.
+# --allow-hosts=...        : except the loopback addresses our tests and
+#                            vcrpy cassettes legitimately target.
+# --strict-markers         : typo in a @pytest.mark.x will fail, not warn.
+# -ra                      : print short summary for everything except pass.
+addopts = [
+    "--disable-socket",
+    "--allow-hosts=127.0.0.1,localhost,::1",
+    "--strict-markers",
+    "-ra",
+]
+
+# vcrpy default: replay-only. Re-recording is explicit: pass
+# --record-mode=rewrite on the command line against real local services.
+# pytest-recording reads this key.
+[tool.pytest-recording]
+default_cassette_library_dir = "tests/cassettes"
+
+[tool.coverage.run]
+source = ["focusmonitor"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

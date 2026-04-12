@@ -1,0 +1,46 @@
+# vcrpy cassette — DO NOT hand-edit except to remove personal data.
+#
+# capture_date: 2026-04-12
+# service: ollama
+# ollama_version: 0.20.5
+# model: llama3.2-vision:latest
+# model_digest: prefix see `ollama show llama3.2-vision` at re-record time
+# model_params: 10.7B, Q4_K_M, family=mllama
+# captured_against: http://localhost:11434
+#
+# Re-record triggers: model bump, Ollama upgrade, upstream shape change.
+# Re-record cmd:      pytest --record-mode=rewrite -k <test_name>
+# See tests/cassettes/README.md for the full re-record + review workflow.
+interactions:
+- request:
+    body: '{"model": "llama3.2-vision", "prompt": "Respond with the single word: OK",
+      "stream": false}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '91'
+      Content-Type:
+      - application/json
+      Host:
+      - localhost:11434
+      User-Agent:
+      - Python-urllib/3.13
+    method: POST
+    uri: http://localhost:11434/api/generate
+  response:
+    body:
+      string: '{"model":"llama3.2-vision","created_at":"2026-04-12T16:03:08.373021Z","response":"OK","done":true,"done_reason":"stop","context":[128006,882,128007,271,66454,449,279,3254,3492,25,10619,128009,128006,78191,128007,271,4012],"total_duration":27418430667,"load_duration":26103783042,"prompt_eval_count":16,"prompt_eval_duration":1158979792,"eval_count":2,"eval_duration":93663541}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '376'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 12 Apr 2026 16:03:08 GMT
+    status:
+      code: 200
+      message: OK
+version: 1

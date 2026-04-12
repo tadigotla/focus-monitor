@@ -1,0 +1,49 @@
+# vcrpy cassette — DO NOT hand-edit except to remove personal data.
+#
+# capture_date: 2026-04-12
+# service: ollama
+# ollama_version: 0.20.5
+# model: llama3.2-vision:latest
+# model_digest: prefix see `ollama show llama3.2-vision` at re-record time
+# model_params: 10.7B, Q4_K_M, family=mllama
+# captured_against: http://localhost:11434
+#
+# Re-record triggers: model bump, Ollama upgrade, upstream shape change.
+# Re-record cmd:      pytest --record-mode=rewrite -k <test_name>
+# See tests/cassettes/README.md for the full re-record + review workflow.
+interactions:
+- request:
+    body: '{"model": "llama3.2-vision", "prompt": "How many images? Reply with the
+      digit only.", "stream": false, "images": ["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNg+M8AAAICAQB7CYF4AAAAAElFTkSuQmCC",
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC"]}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '402'
+      Content-Type:
+      - application/json
+      Host:
+      - localhost:11434
+      User-Agent:
+      - Python-urllib/3.13
+    method: POST
+    uri: http://localhost:11434/api/generate
+  response:
+    body:
+      string: '{"error":"this model only supports one image while more than one image
+        requested"}'
+    headers:
+      Connection:
+      - close
+      Content-Length:
+      - '82'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Sun, 12 Apr 2026 16:03:25 GMT
+    status:
+      code: 400
+      message: Bad Request
+version: 1
