@@ -68,6 +68,29 @@ def _consume_csrf_token(token):
     return True
 
 
+def _validate_csrf_token(token):
+    """Return True if `token` is present and not expired; do NOT remove it.
+
+    Used by endpoints whose mutation step might fail in transient ways
+    (e.g. the DB lock / OperationalError path in session corrections).
+    If we consumed the token up-front, a failed mutation would burn
+    the user's only valid token and cascade into a 403 on their next
+    click. Validate-only lets a retry use the same token within the
+    existing 1-hour TTL.
+    """
+    if not token or not isinstance(token, str):
+        return False
+    with _csrf_lock:
+        _prune_expired_tokens_locked()
+        expiry = _csrf_tokens.get(token)
+        if expiry is None:
+            return False
+        if expiry <= time.time():
+            _csrf_tokens.pop(token, None)
+            return False
+    return True
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Design tokens — one place to change the whole look.
 # ═════════════════════════════════════════════════════════════════════════════
@@ -534,6 +557,150 @@ html, body {
 .add-task-row .row-view {
   text-align: left;
 }
+
+/* ── Session timeline ───────────────────────────────────────────────────── */
+
+.sessions-card {
+  padding: 0;
+}
+
+.sessions-card .card-title {
+  padding: var(--space-5) var(--space-5) 0;
+}
+
+.session-list {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+}
+
+.session-row {
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.session-row:first-child {
+  border-top: none;
+}
+
+.session-row.kind-away {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+}
+
+.session-row.kind-unclear .session-label {
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.session-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.session-time {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-subtle);
+  min-width: 9em;
+}
+
+.session-label {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.session-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-subtle);
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.conf-pair {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.conf-badge {
+  display: inline-block;
+  font-size: var(--font-size-xs);
+  padding: 0 var(--space-2);
+  border-radius: 100px;
+  border: 1px solid var(--color-border);
+}
+
+.conf-badge.conf-high { color: var(--color-score-good); border-color: var(--color-score-good); }
+.conf-badge.conf-medium { color: var(--color-score-mid); border-color: var(--color-score-mid); }
+.conf-badge.conf-low { color: var(--color-text-subtle); }
+
+.session-evidence {
+  margin: 0;
+  padding: var(--space-2) 0 0 var(--space-4);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.session-evidence summary {
+  cursor: pointer;
+  color: var(--color-text-subtle);
+  list-style: none;
+  margin-left: calc(var(--space-4) * -1);
+}
+
+.session-evidence summary::-webkit-details-marker { display: none; }
+
+.session-evidence ul {
+  list-style: disc;
+  padding-left: var(--space-4);
+  margin: var(--space-2) 0 0;
+}
+
+.session-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.correct-form {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+.correct-form select,
+.correct-form input[type="text"] {
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.correct-toggle {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px;
+  height: 1px;
+}
+
+.correct-toggle:checked ~ .correct-form { display: flex; }
 """
 
 
@@ -555,6 +722,9 @@ $header
 <section class="zone zone-hero" aria-label="Today at a glance">
 $score_card
 $timeline_card
+</section>
+<section class="zone zone-sessions" aria-label="Session timeline">
+$sessions_card
 </section>
 <section class="zone zone-primary" aria-label="Plan and discoveries">
 $planned_card
@@ -1041,6 +1211,293 @@ def render_nudges_card(nudge_rows):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  Session timeline card: renders the primary session list derived from
+#  the `sessions` table (which the aggregator maintains). Each row shows
+#  time range, task name (or Unclear / Away), confidence indicators,
+#  evidence drawer, and inline correction/confirm controls.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_USER_KIND_OPTIONS = (
+    ("on_planned_task", "Working on a task"),
+    ("thinking_offline", "Thinking / reading offline"),
+    ("meeting", "Meeting (no screenshare)"),
+    ("break", "Break / lunch"),
+    ("other", "Something else"),
+)
+
+
+def _fmt_time_range(start_iso, end_iso):
+    try:
+        s = datetime.fromisoformat(start_iso).strftime("%H:%M")
+    except (TypeError, ValueError):
+        s = "--:--"
+    try:
+        e = datetime.fromisoformat(end_iso).strftime("%H:%M")
+    except (TypeError, ValueError):
+        e = "--:--"
+    return f"{s} – {e}"
+
+
+def _conf_badge(label, level):
+    level = level if level in ("low", "medium", "high") else "low"
+    return (
+        f'<span class="conf-badge conf-{level}" '
+        f'title="{html.escape(label)}: {level}">'
+        f'{html.escape(label[0].upper())}{html.escape(level[0])}</span>'
+    )
+
+
+def _render_evidence_drawer(evidence):
+    if not evidence:
+        return ""
+    items = []
+    for e in evidence:
+        if not isinstance(e, dict):
+            continue
+        sig = html.escape(str(e.get("signal", "")))
+        weight = html.escape(str(e.get("weight", "")))
+        items.append(f"<li>{sig} <em>({weight})</em></li>")
+    if not items:
+        return ""
+    return (
+        '<details class="session-evidence">'
+        '<summary>Why we think so</summary>'
+        f'<ul>{"".join(items)}</ul>'
+        '</details>'
+    )
+
+
+def _render_correction_form(session_id, csrf_token):
+    """Inline correction form — emitted as a sibling of the
+    session-actions row, NOT nested inside its flex container.
+
+    Uses the standard `<form hx-post>` + `<button type="submit">`
+    pattern. The toggle checkbox that reveals this form lives
+    upstream in `render_session_row`, a general sibling away via the
+    `.correct-toggle:checked ~ .correct-form` CSS selector.
+    """
+    options = "".join(
+        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
+        for value, label in _USER_KIND_OPTIONS
+    )
+    return (
+        f'<form class="correct-form" '
+        f'hx-post="/api/sessions/{session_id}/correct" '
+        f'hx-target="#session-{session_id}" hx-swap="outerHTML">'
+        f'<input type="hidden" name="csrf" value="{html.escape(csrf_token)}">'
+        f'<label>Actually I was:'
+        f'<select name="user_kind">{options}</select>'
+        f'</label>'
+        f'<label>Task name (optional):'
+        f'<input type="text" name="user_task" placeholder="e.g. auth refactor">'
+        f'</label>'
+        f'<label>Note (optional):'
+        f'<input type="text" name="user_note">'
+        f'</label>'
+        f'<div class="form-actions">'
+        f'<button type="submit" class="btn btn-primary">Save</button>'
+        f'</div>'
+        f'</form>'
+    )
+
+
+def render_session_row(session, csrf_token):
+    """Render ONE session entry for the timeline. Used both by
+    `render_session_timeline` and by the correction/confirm endpoint
+    re-render path.
+
+    `session` is a dict with the shape produced by
+    `focusmonitor.sessions.aggregate()` or a row read back from the
+    `sessions` table.
+    """
+    kind = session.get("kind", "session")
+    session_id = session.get("id")
+    time_range = _fmt_time_range(session.get("start"), session.get("end"))
+
+    if kind == "away":
+        label = "Away"
+    elif kind == "unclear":
+        label = "Unclear"
+    else:
+        task = session.get("task")
+        label = task if task else "Dev work"
+
+    name_conf = session.get("task_name_confidence", "low")
+    boundary_conf = session.get("boundary_confidence", "low")
+
+    meta_parts = []
+    cycle_count = int(session.get("cycle_count") or 0)
+    if cycle_count:
+        meta_parts.append(f"{cycle_count} cycle{'s' if cycle_count != 1 else ''}")
+    dip_count = int(session.get("dip_count") or 0)
+    if dip_count:
+        meta_parts.append(f"{dip_count} dip{'s' if dip_count != 1 else ''}")
+    meta = (
+        f'<span class="session-meta">{" · ".join(html.escape(p) for p in meta_parts)}</span>'
+        if meta_parts else ""
+    )
+
+    conf_block = (
+        '<span class="conf-pair">'
+        f'{_conf_badge("Boundary", boundary_conf)}'
+        f'{_conf_badge("Name", name_conf)}'
+        '</span>'
+    )
+
+    evidence_html = _render_evidence_drawer(session.get("evidence") or [])
+
+    actions_html = ""
+    if kind != "away" and session_id is not None:
+        # The correction form lives OUTSIDE the session-actions flex
+        # container. Keeping the form and the action buttons in the
+        # same flex row caused click events on Save/Confirm to
+        # disappear in certain browsers (Safari on macOS in
+        # particular — keyboard Enter still submits, but mouse
+        # clicks don't fire). Lifting the form to be a sibling of
+        # the action row sidesteps this entirely.
+        correction_form = _render_correction_form(session_id, csrf_token)
+        confirm_btn = ""
+        if kind == "session":
+            confirm_btn = (
+                f'<button type="button" class="btn" '
+                f'hx-post="/api/sessions/{session_id}/confirm" '
+                f'hx-target="#session-{session_id}" hx-swap="outerHTML" '
+                f'hx-vals=\'{{"csrf": "{html.escape(csrf_token)}"}}\'>'
+                f'✓ Confirm</button>'
+            )
+        # Bare toggle + label for the correction drawer (the form is
+        # a sibling below via CSS general-sibling selector).
+        correct_toggle_label = (
+            f'<label for="corr-toggle-{session_id}" class="btn">'
+            f'✏️ Correct</label>'
+        )
+        actions_html = (
+            f'<input type="checkbox" id="corr-toggle-{session_id}" '
+            f'class="correct-toggle">'
+            f'<div class="session-actions">{confirm_btn}{correct_toggle_label}</div>'
+            f'{correction_form}'
+        )
+
+    row_id = (
+        f' id="session-{session_id}"' if session_id is not None else ""
+    )
+
+    return (
+        f'<li class="session-row kind-{kind}"{row_id}>'
+        f'<div class="session-head">'
+        f'<span class="session-time">{html.escape(time_range)}</span>'
+        f'<span class="session-label">{html.escape(label)}</span>'
+        f'{conf_block}'
+        f'{meta}'
+        f'</div>'
+        f'{evidence_html}'
+        f'{actions_html}'
+        f'</li>'
+    )
+
+
+def render_session_timeline(sessions, csrf_token=""):
+    """Render the entire session timeline card. Returns a full card
+    fragment suitable for slotting into the dashboard template."""
+    title = '<div class="card-title">Today\'s sessions</div>'
+    if not sessions:
+        return (
+            '<div class="card sessions-card">'
+            f'{title}'
+            '<div class="empty">No sessions yet today. '
+            'Run the monitor for a while and they will appear here.</div>'
+            '</div>'
+        )
+    items = "".join(render_session_row(s, csrf_token) for s in sessions)
+    return (
+        '<div class="card sessions-card">'
+        f'{title}'
+        f'<ul class="session-list">{items}</ul>'
+        '</div>'
+    )
+
+
+def _load_sessions_for_range(start_iso, end_iso):
+    """Read session rows from the DB and return dicts ready to render."""
+    if not DB_PATH.exists():
+        return []
+    db = sqlite3.connect(str(DB_PATH))
+    try:
+        db.execute("PRAGMA busy_timeout = 10000")
+        rows = db.execute(
+            "SELECT id, start, end, task, task_name_confidence, "
+            "boundary_confidence, cycle_count, dip_count, evidence_json, "
+            "kind FROM sessions "
+            "WHERE start >= ? AND start < ? ORDER BY start ASC",
+            (start_iso, end_iso),
+        ).fetchall()
+    finally:
+        db.close()
+    results = []
+    for row in rows:
+        (
+            row_id, start, end, task, name_conf, bound_conf,
+            cycle_count, dip_count, evidence_json, kind,
+        ) = row
+        try:
+            evidence = json.loads(evidence_json) if evidence_json else []
+        except (json.JSONDecodeError, TypeError):
+            evidence = []
+        results.append({
+            "id": row_id,
+            "start": start,
+            "end": end,
+            "task": task,
+            "task_name_confidence": name_conf,
+            "boundary_confidence": bound_conf,
+            "cycle_count": cycle_count,
+            "dip_count": dip_count,
+            "evidence": evidence,
+            "kind": kind,
+        })
+    return results
+
+
+def _load_session_by_id(session_id):
+    """Fetch a single session row, or return None if missing."""
+    if not DB_PATH.exists():
+        return None
+    db = sqlite3.connect(str(DB_PATH))
+    try:
+        db.execute("PRAGMA busy_timeout = 10000")
+        row = db.execute(
+            "SELECT id, start, end, task, task_name_confidence, "
+            "boundary_confidence, cycle_count, dip_count, evidence_json, "
+            "kind FROM sessions WHERE id=?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        db.close()
+    if row is None:
+        return None
+    (
+        row_id, start, end, task, name_conf, bound_conf,
+        cycle_count, dip_count, evidence_json, kind,
+    ) = row
+    try:
+        evidence = json.loads(evidence_json) if evidence_json else []
+    except (json.JSONDecodeError, TypeError):
+        evidence = []
+    return {
+        "id": row_id,
+        "start": start,
+        "end": end,
+        "task": task,
+        "task_name_confidence": name_conf,
+        "boundary_confidence": bound_conf,
+        "cycle_count": cycle_count,
+        "dip_count": dip_count,
+        "evidence": evidence,
+        "kind": kind,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  Planned task loader (for the planned card). Local import to avoid
 #  circular dependency with focusmonitor.tasks during normal imports.
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1057,10 +1514,15 @@ def _load_planned_tasks():
 #  Orchestrator.
 # ═════════════════════════════════════════════════════════════════════════════
 
-def build_dashboard(refresh_sec=0, range_key="today"):
+def build_dashboard(refresh_sec=0, range_key="today", view="default"):
     """Build dashboard HTML and return it as a string.
 
     Returns None if the database file does not exist yet (first-run state).
+
+    `view="legacy"` renders a diagnostic variant that omits the
+    session timeline zone entirely (the sessions card becomes an
+    empty placeholder), so the developer can inspect the raw
+    per-cycle activity_log view without aggregation side-effects.
     """
     if not DB_PATH.exists():
         return None
@@ -1068,7 +1530,7 @@ def build_dashboard(refresh_sec=0, range_key="today"):
     range_key, start_iso, end_iso, _label, date_display = resolve_range(range_key)
 
     db = sqlite3.connect(str(DB_PATH))
-    db.execute("PRAGMA busy_timeout = 5000")
+    db.execute("PRAGMA busy_timeout = 10000")
 
     rows = db.execute(
         "SELECT timestamp, summary, raw_response, apps_used, project_detected "
@@ -1132,6 +1594,18 @@ def build_dashboard(refresh_sec=0, range_key="today"):
 
     csrf_token = _issue_csrf_token()
 
+    if view == "legacy":
+        sessions_card = (
+            '<div class="card sessions-card">'
+            '<div class="card-title">Sessions (legacy view — disabled)</div>'
+            '<div class="empty">Legacy view: session aggregation is '
+            'hidden. Use the default view to see the session timeline.</div>'
+            '</div>'
+        )
+    else:
+        sessions = _load_sessions_for_range(start_iso, end_iso)
+        sessions_card = render_session_timeline(sessions, csrf_token)
+
     subs = {
         "refresh_meta": refresh_meta,
         "css": STYLE,
@@ -1139,6 +1613,7 @@ def build_dashboard(refresh_sec=0, range_key="today"):
         "header": render_header(range_key, date_display),
         "score_card": render_score_card(avg_score, len(rows), len(nudge_rows)),
         "timeline_card": render_timeline(timeline_pts, range_key),
+        "sessions_card": sessions_card,
         "planned_card": render_planned_card(planned_tasks, project_counts, csrf_token),
         "discovered_card": render_discovered_card(activities, csrf_token),
         "apps_card": render_apps_card(top_apps),
@@ -1184,11 +1659,20 @@ def _send_html_fragment(handler, fragment):
     handler.wfile.write(body)
 
 
-def _mutate(handler, required_fields=()):
+def _mutate(handler, required_fields=(), consume_csrf=True):
     """Validate a mutation request and return a form-fields dict on success.
 
     On any failure, writes an error response to `handler` and returns None.
     The caller MUST check for None and return immediately on failure.
+
+    When `consume_csrf=False`, the CSRF token is validated but NOT removed
+    from the store. Use this for endpoints whose mutation step is
+    potentially flaky (e.g. can return a transient DB error): the token
+    stays valid so the user can retry without reloading the whole page.
+    The 1-hour TTL still bounds the token's lifetime. The caller is
+    responsible for eventually consuming the token on the success path
+    (by calling `_consume_csrf_token` and re-issuing a fresh one for
+    the re-rendered fragment).
     """
     valid_hosts = _server_origin_candidates(handler)
 
@@ -1229,9 +1713,14 @@ def _mutate(handler, required_fields=()):
     # Prefer header when present.
     header_token = handler.headers.get("X-CSRF-Token") or ""
     token = header_token or fields.get("csrf") or ""
-    if not _consume_csrf_token(token):
-        _send_error(handler, 403, "forbidden: invalid or missing csrf token")
-        return None
+    if consume_csrf:
+        if not _consume_csrf_token(token):
+            _send_error(handler, 403, "forbidden: invalid or missing csrf token")
+            return None
+    else:
+        if not _validate_csrf_token(token):
+            _send_error(handler, 403, "forbidden: invalid or missing csrf token")
+            return None
 
     for req in required_fields:
         if not fields.get(req, "").strip():
@@ -1259,7 +1748,7 @@ def _rerender_planned_card(csrf_token, oob=False):
         _, start_iso, end_iso, _label, _disp = resolve_range("today")
         db = sqlite3.connect(str(DB_PATH))
         try:
-            db.execute("PRAGMA busy_timeout = 5000")
+            db.execute("PRAGMA busy_timeout = 10000")
             rows = db.execute(
                 "SELECT project_detected FROM activity_log "
                 "WHERE timestamp >= ? AND timestamp < ?",
@@ -1300,7 +1789,14 @@ _POST_ROUTES = [
     (re.compile(r"^/api/planned-tasks/([^/]+)$"), "_handle_update_task"),
     (re.compile(r"^/api/discoveries/([^/]+)/promote$"), "_handle_promote_discovery"),
     (re.compile(r"^/api/discoveries/([^/]+)/hide$"), "_handle_hide_discovery"),
+    (re.compile(r"^/api/sessions/([0-9]+)/correct$"), "_handle_correct_session"),
+    (re.compile(r"^/api/sessions/([0-9]+)/confirm$"), "_handle_confirm_session"),
 ]
+
+
+_VALID_USER_KINDS_SET = frozenset({
+    "on_planned_task", "thinking_offline", "meeting", "break", "other",
+})
 
 
 def _static_content_type(filename):
@@ -1345,8 +1841,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         range_key = (qs.get("range") or ["today"])[0]
         if range_key not in VALID_RANGES:
             range_key = "today"
+        view = (qs.get("view") or ["default"])[0]
+        if view not in ("default", "legacy"):
+            view = "default"
 
-        page = build_dashboard(refresh_sec=_server_refresh_sec, range_key=range_key)
+        page = build_dashboard(
+            refresh_sec=_server_refresh_sec, range_key=range_key, view=view,
+        )
         if page is None:
             self.send_response(503)
             self.send_header("Content-Type", "text/plain")
@@ -1445,6 +1946,145 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         fresh_csrf = _issue_csrf_token()
         _send_html_fragment(self, _rerender_discovered_card(fresh_csrf))
+
+    def _handle_correct_session(self, session_id_str):
+        import sys as _sys
+        # Diagnostic: surface incoming fields to stderr so the
+        # monitor's console shows exactly what the browser posted
+        # when Save fails. Temporary until the 400/403 cascade is
+        # pinned down.
+        _raw_csrf_header = self.headers.get("X-CSRF-Token") or "<none>"
+        _content_length = self.headers.get("Content-Length") or "<none>"
+        print(
+            f"[correct session={session_id_str}] "
+            f"content-length={_content_length} "
+            f"x-csrf-token={_raw_csrf_header[:10]}...",
+            file=_sys.stderr,
+        )
+        fields = _mutate(self, required_fields=("user_kind",), consume_csrf=False)
+        if fields is None:
+            print(
+                f"[correct session={session_id_str}] "
+                f"_mutate returned None (sent 4xx)",
+                file=_sys.stderr,
+            )
+            return
+        print(
+            f"[correct session={session_id_str}] fields keys="
+            f"{sorted(fields.keys())} "
+            f"user_kind={fields.get('user_kind')!r} "
+            f"user_task={fields.get('user_task')!r}",
+            file=_sys.stderr,
+        )
+        self._apply_session_verdict(session_id_str, fields, verdict="corrected")
+
+    def _handle_confirm_session(self, session_id_str):
+        import sys as _sys
+        print(
+            f"[confirm session={session_id_str}] "
+            f"content-length={self.headers.get('Content-Length') or '<none>'}",
+            file=_sys.stderr,
+        )
+        fields = _mutate(self, required_fields=(), consume_csrf=False)
+        if fields is None:
+            print(
+                f"[confirm session={session_id_str}] _mutate returned None",
+                file=_sys.stderr,
+            )
+            return
+        # Confirmations don't ship a user_kind on the wire — default
+        # to on_planned_task. The correction-loop schema requires a
+        # valid user_kind either way.
+        fields.setdefault("user_kind", "on_planned_task")
+        self._apply_session_verdict(session_id_str, fields, verdict="confirmed")
+
+    def _apply_session_verdict(self, session_id_str, fields, verdict):
+        from focusmonitor.corrections import CorrectionError, record_correction
+
+        try:
+            session_id = int(session_id_str)
+        except ValueError:
+            _send_error(self, 400, "bad request: session id is not an integer")
+            return
+
+        user_kind = (fields.get("user_kind") or "").strip()
+        if user_kind not in _VALID_USER_KINDS_SET:
+            _send_error(self, 400, "bad request: invalid user_kind")
+            return
+
+        session = _load_session_by_id(session_id)
+        if session is None:
+            _send_error(self, 404, "not found: no session with that id")
+            return
+
+        user_task = (fields.get("user_task") or "").strip() or None
+        user_note = (fields.get("user_note") or "").strip() or None
+
+        model_state = {
+            "range_start": session["start"],
+            "range_end": session["end"],
+            "task": session.get("task"),
+            "evidence": session.get("evidence") or [],
+            "boundary_confidence": session.get("boundary_confidence", "low"),
+            "name_confidence": session.get("task_name_confidence", "low"),
+            "signals": {},
+        }
+        user_state = {
+            "verdict": verdict,
+            "user_kind": user_kind,
+            "user_task": user_task,
+            "user_note": user_note,
+        }
+
+        # Retry OperationalError a few times with short sleeps. WAL
+        # mode + busy_timeout already handle normal contention; this
+        # is a belt-and-suspenders for the rare case where the
+        # monitor's long-lived connection is in a pre-WAL state and
+        # locks briefly. Total max delay: ~1.5s.
+        last_error = None
+        for attempt in range(3):
+            db = sqlite3.connect(str(DB_PATH))
+            try:
+                db.execute("PRAGMA busy_timeout = 10000")
+                try:
+                    record_correction(
+                        db, "session", session_id, model_state, user_state,
+                    )
+                    last_error = None
+                    break
+                except CorrectionError as e:
+                    _send_error(self, 400, f"bad request: {e}")
+                    return
+                except sqlite3.OperationalError as e:
+                    last_error = e
+            finally:
+                db.close()
+            if attempt < 2:
+                time.sleep(0.5)
+
+        if last_error is not None:
+            # Token was NOT consumed (we used validate-only mode), so
+            # the user can retry with the same token. Surface the
+            # underlying error so the cause is visible in the browser
+            # console instead of a generic "Service Unavailable".
+            _send_error(
+                self, 503,
+                f"service unavailable: {last_error}. "
+                "Restart the monitor process if this persists.",
+            )
+            return
+
+        # Success: now consume the CSRF token and re-render.
+        header_token = self.headers.get("X-CSRF-Token") or ""
+        form_token = fields.get("csrf") or ""
+        _consume_csrf_token(header_token or form_token)
+
+        fresh_csrf = _issue_csrf_token()
+        # Re-render just the affected session row. The row content
+        # itself doesn't change — the correction is recorded in the
+        # append-only store — but we return a fresh fragment so htmx
+        # has something to swap in and the user sees the form close.
+        _send_html_fragment(self, render_session_row(session, fresh_csrf))
 
     def log_message(self, format, *args):
         pass

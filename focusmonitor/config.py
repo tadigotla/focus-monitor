@@ -33,6 +33,18 @@ DEFAULT_CONFIG = {
     # skips screenshot + analysis ticks. Set very large (e.g. 86400) to
     # effectively disable the gate; set to 0 to skip immediately on AFK.
     "idle_skip_grace_sec": 60,
+    # Pass 1 returns a typed artifact per screenshot instead of free-form
+    # prose when true. See openspec change task-recognition-loop.
+    "pass1_structured": True,
+    # Most-recent-N user corrections injected as few-shot examples into
+    # the Pass 2 classification prompt. 0 disables retrieval entirely.
+    "corrections_few_shot_n": 5,
+    # Maximum duration of a non-matching "dip" cycle absorbed into the
+    # surrounding session by the deterministic aggregator.
+    "session_dip_tolerance_sec": 300,
+    # When false, skip session aggregation and render the legacy
+    # per-cycle view. Useful as a diagnostic escape hatch.
+    "session_aggregation_enabled": True,
 }
 
 DEFAULT_PLANNED_TASKS = [

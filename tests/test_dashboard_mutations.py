@@ -523,3 +523,419 @@ class TestUnknownRoute:
         _, _, http_post, scrape_csrf = live_server
         status, _, _ = http_post("/api/no-such-route", {"csrf": scrape_csrf()})
         assert status == 404
+
+
+# ── Session timeline + correction/confirm endpoints ─────────────────────────
+
+def _seed_session_row(db, task="auth refactor", kind="session"):
+    cur = db.execute(
+        """INSERT INTO sessions (
+            start, end, task, task_name_confidence, boundary_confidence,
+            cycle_count, dip_count, evidence_json, kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "2026-04-12T10:00:00",
+            "2026-04-12T10:30:00",
+            task,
+            "high",
+            "high",
+            3,
+            0,
+            json.dumps([{"signal": "workspace", "weight": "strong"}]),
+            kind,
+        ),
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+class TestRenderSessionTimeline:
+    """Unit tests for the session timeline renderer — no HTTP."""
+
+    def test_empty_state(self):
+        html = dash.render_session_timeline([], csrf_token="t")
+        assert "No sessions yet today" in html
+        assert "session-list" not in html
+
+    def test_normal_session(self):
+        html = dash.render_session_timeline([{
+            "id": 7, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T10:30:00", "task": "auth refactor",
+            "task_name_confidence": "high", "boundary_confidence": "high",
+            "cycle_count": 3, "dip_count": 0,
+            "evidence": [{"signal": "workspace", "weight": "strong"}],
+            "kind": "session",
+        }], csrf_token="t")
+        assert 'id="session-7"' in html
+        assert "auth refactor" in html
+        assert "10:00" in html and "10:30" in html
+        assert "conf-high" in html
+        # Evidence drawer rendered.
+        assert "Why we think so" in html
+        assert "workspace" in html
+        # Confirm and correct controls are visible.
+        assert "hx-post=\"/api/sessions/7/confirm\"" in html
+        assert "hx-post=\"/api/sessions/7/correct\"" in html
+
+    def test_unclear_session(self):
+        html = dash.render_session_timeline([{
+            "id": 1, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T10:05:00", "task": None,
+            "task_name_confidence": "low", "boundary_confidence": "low",
+            "cycle_count": 1, "dip_count": 0, "evidence": [],
+            "kind": "unclear",
+        }], csrf_token="t")
+        assert "kind-unclear" in html
+        assert ">Unclear<" in html
+        # Unclear rows have the correct button but NO confirm button.
+        assert "hx-post=\"/api/sessions/1/correct\"" in html
+        assert "hx-post=\"/api/sessions/1/confirm\"" not in html
+
+    def test_away_entry(self):
+        html = dash.render_session_timeline([{
+            "id": 2, "start": "2026-04-12T12:00:00",
+            "end": "2026-04-12T13:00:00", "task": None,
+            "task_name_confidence": "low", "boundary_confidence": "high",
+            "cycle_count": 1, "dip_count": 0, "evidence": [],
+            "kind": "away",
+        }], csrf_token="t")
+        assert "kind-away" in html
+        assert ">Away<" in html
+        # Away entries have NO correction OR confirm controls.
+        assert "/api/sessions/2/correct" not in html
+        assert "/api/sessions/2/confirm" not in html
+
+    def test_session_with_dips(self):
+        html = dash.render_session_timeline([{
+            "id": 3, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T11:00:00", "task": "auth",
+            "task_name_confidence": "high", "boundary_confidence": "high",
+            "cycle_count": 9, "dip_count": 1, "evidence": [],
+            "kind": "session",
+        }], csrf_token="t")
+        assert "9 cycles" in html
+        assert "1 dip" in html
+
+    def test_html_escapes_untrusted_task_name(self):
+        html = dash.render_session_timeline([{
+            "id": 4, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T10:30:00",
+            "task": "<script>alert(1)</script>",
+            "task_name_confidence": "high", "boundary_confidence": "high",
+            "cycle_count": 1, "dip_count": 0, "evidence": [],
+            "kind": "session",
+        }], csrf_token="t")
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+        assert "<script>alert(1)</script>" not in html
+
+    def test_correction_form_has_five_user_kind_options(self):
+        html = dash.render_session_timeline([{
+            "id": 5, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T10:30:00", "task": "t",
+            "task_name_confidence": "high", "boundary_confidence": "high",
+            "cycle_count": 1, "dip_count": 0, "evidence": [],
+            "kind": "session",
+        }], csrf_token="t")
+        assert 'value="on_planned_task"' in html
+        assert 'value="thinking_offline"' in html
+        assert 'value="meeting"' in html
+        assert 'value="break"' in html
+        assert 'value="other"' in html
+        # Human labels.
+        assert "Working on a task" in html
+        assert "Thinking / reading offline" in html
+        assert "Meeting (no screenshare)" in html
+        assert "Break / lunch" in html
+        assert "Something else" in html
+
+    def test_correction_form_uses_form_level_hx_post(self):
+        """The correction form uses the proven `<form hx-post>` +
+        `<button type="submit">` pattern — same as render_planned_card.
+        This pins the shape so a future refactor doesn't silently
+        regress to a button-driven variant that didn't serialize
+        form fields correctly in the browser."""
+        html = dash.render_session_timeline([{
+            "id": 9, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T10:30:00", "task": "t",
+            "task_name_confidence": "high", "boundary_confidence": "high",
+            "cycle_count": 1, "dip_count": 0, "evidence": [],
+            "kind": "session",
+        }], csrf_token="t")
+        import re
+        # hx-post lives on the <form> tag itself.
+        m = re.search(
+            r'<form class="correct-form"\s+hx-post="/api/sessions/9/correct"',
+            html,
+        )
+        assert m is not None, "hx-post must be on the <form> element"
+        # Save is a regular submit button inside that form.
+        assert '<button type="submit" class="btn btn-primary">Save</button>' in html
+
+    def test_correction_form_is_outside_session_actions_container(self):
+        """Regression: the correction form must NOT be a child of
+        `session-actions`. Nesting it there put Save inside a flex
+        container alongside Confirm/Correct, and browser click
+        events didn't fire reliably on the Save button in that
+        layout (keyboard Enter still worked). Lifting the form to
+        be a sibling of session-actions sidesteps the issue."""
+        html_out = dash.render_session_timeline([{
+            "id": 11, "start": "2026-04-12T10:00:00",
+            "end": "2026-04-12T10:30:00", "task": "t",
+            "task_name_confidence": "high", "boundary_confidence": "high",
+            "cycle_count": 1, "dip_count": 0, "evidence": [],
+            "kind": "session",
+        }], csrf_token="t")
+        # session-actions opens, then closes, THEN the form opens.
+        # The form's opening tag must NOT be inside session-actions.
+        actions_start = html_out.find('<div class="session-actions">')
+        actions_end = html_out.find('</div>', actions_start)
+        form_start = html_out.find('<form class="correct-form"')
+        assert actions_start != -1
+        assert actions_end != -1
+        assert form_start != -1
+        assert form_start > actions_end, (
+            "correction form must be a SIBLING of session-actions, "
+            "not a descendant — nesting it inside the flex row caused "
+            "clicks on Save to be swallowed in the browser"
+        )
+
+
+class TestSessionEndpoints:
+
+    def _seed_db_session(self):
+        db = init_db()
+        try:
+            return _seed_session_row(db)
+        finally:
+            db.close()
+
+    def test_correct_happy_path(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+        status, _, body = http_post(
+            f"/api/sessions/{sid}/correct",
+            {
+                "csrf": scrape_csrf(),
+                "user_kind": "on_planned_task",
+                "user_task": "auth refactor",
+                "user_note": "yes, this is right",
+            },
+        )
+        assert status == 200
+        # Response is the re-rendered row.
+        assert f'id="session-{sid}"' in body
+        # DB got the correction.
+        db = sqlite3.connect(str(config.DB_PATH))
+        rows = db.execute(
+            "SELECT user_verdict, user_task, user_kind, user_note "
+            "FROM corrections WHERE entry_kind='session' AND entry_id=?",
+            (sid,),
+        ).fetchall()
+        db.close()
+        assert len(rows) == 1
+        assert rows[0] == (
+            "corrected", "auth refactor", "on_planned_task", "yes, this is right",
+        )
+
+    def test_confirm_happy_path(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+        status, _, body = http_post(
+            f"/api/sessions/{sid}/confirm",
+            {"csrf": scrape_csrf()},
+        )
+        assert status == 200
+        assert f'id="session-{sid}"' in body
+        db = sqlite3.connect(str(config.DB_PATH))
+        rows = db.execute(
+            "SELECT user_verdict FROM corrections WHERE entry_id=?", (sid,),
+        ).fetchall()
+        db.close()
+        assert len(rows) == 1
+        assert rows[0][0] == "confirmed"
+
+    def test_correct_rejects_invalid_user_kind(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+        status, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": scrape_csrf(), "user_kind": "bogus"},
+        )
+        assert status == 400
+        db = sqlite3.connect(str(config.DB_PATH))
+        count = db.execute("SELECT COUNT(*) FROM corrections").fetchone()[0]
+        db.close()
+        assert count == 0
+
+    def test_correct_404_on_unknown_session(self, live_server):
+        self._seed_db_session()  # exists but id != 9999
+        _, _, http_post, scrape_csrf = live_server
+        status, _, _ = http_post(
+            "/api/sessions/9999/correct",
+            {"csrf": scrape_csrf(), "user_kind": "on_planned_task"},
+        )
+        assert status == 404
+
+    def test_correct_without_csrf_is_403(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, _ = live_server
+        status, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"user_kind": "on_planned_task"},
+        )
+        assert status == 403
+
+    def test_correct_with_wrong_host_is_403(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+        status, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": scrape_csrf(), "user_kind": "on_planned_task"},
+            headers={"Host": "evil.example.com:1234"},
+        )
+        assert status == 403
+
+    def test_confirm_without_csrf_is_403(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, _ = live_server
+        status, _, _ = http_post(
+            f"/api/sessions/{sid}/confirm", {},
+        )
+        assert status == 403
+
+    def test_correct_missing_user_kind_is_400(self, live_server):
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+        # user_kind required but missing entirely → 400 via _mutate
+        status, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": scrape_csrf()},
+        )
+        assert status == 400
+
+    def test_operational_error_returns_503_not_crash(
+        self, live_server, monkeypatch
+    ):
+        """If the SQLite INSERT hits OperationalError (e.g. database
+        locked, disk I/O), the handler must return HTTP 503, NOT
+        crash the worker thread. A crashed thread leaves htmx
+        dangling and the inline correction form stays open on the
+        user's screen — the symptom we hit on 2026-04-12."""
+        import sqlite3 as _sqlite3
+        from focusmonitor import corrections as corr_mod
+
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+
+        def boom(*a, **kw):
+            raise _sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(corr_mod, "record_correction", boom)
+
+        status, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": scrape_csrf(), "user_kind": "on_planned_task"},
+        )
+        assert status == 503
+
+    def test_failed_mutation_does_not_burn_csrf_token(
+        self, live_server, monkeypatch
+    ):
+        """When record_correction fails with OperationalError, the
+        CSRF token must NOT be consumed. Otherwise the user's next
+        click on a different row fails with 403 even though nothing
+        successful happened. Regression from 2026-04-12 where a 503
+        on /confirm cascaded into a 403 on /correct.
+
+        Two passes: first with record_correction patched to raise
+        (503 expected, token preserved), then second with a stub
+        that records a hit-count so we can assert the token is
+        still accepted by `_mutate`.
+        """
+        import sqlite3 as _sqlite3
+        from focusmonitor import corrections as corr_mod
+
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+
+        calls = {"n": 0}
+
+        def flaky(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # First call fails — simulates a locked DB.
+                raise _sqlite3.OperationalError("database is locked")
+            # Later calls: noop, mimic a successful insert. The handler
+            # doesn't inspect return value of record_correction, so
+            # returning None is fine.
+            return 42
+
+        monkeypatch.setattr(corr_mod, "record_correction", flaky)
+
+        csrf = scrape_csrf()
+        # First request: all three retries hit `flaky` and fail,
+        # returning 503. The token must NOT be consumed.
+        # (flaky always raises on call 1; retries make calls 2 and 3
+        # succeed, but let's make flaky always fail for simplicity.)
+        def always_fail(*a, **kw):
+            raise _sqlite3.OperationalError("database is locked")
+        monkeypatch.setattr(corr_mod, "record_correction", always_fail)
+
+        status1, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": csrf, "user_kind": "on_planned_task"},
+        )
+        assert status1 == 503
+
+        # Swap in a passing stub for the retry.
+        def ok(*a, **kw):
+            return 7
+        monkeypatch.setattr(corr_mod, "record_correction", ok)
+
+        status2, _, body2 = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": csrf, "user_kind": "on_planned_task"},
+        )
+        assert status2 == 200, (
+            f"expected retry with the same token to succeed, got {status2}: "
+            f"{body2[:200]}"
+        )
+
+    def test_successful_mutation_consumes_csrf_token(self, live_server):
+        """On success, the token IS consumed (same guarantee as the
+        other write endpoints). A replay with the same token after
+        success returns 403."""
+        sid = self._seed_db_session()
+        _, _, http_post, scrape_csrf = live_server
+
+        csrf = scrape_csrf()
+        status1, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": csrf, "user_kind": "on_planned_task"},
+        )
+        assert status1 == 200
+        status2, _, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": csrf, "user_kind": "on_planned_task"},
+        )
+        assert status2 == 403
+
+
+class TestLegacyView:
+
+    def test_default_view_renders_session_timeline_zone(self, live_server):
+        _, http_get, _, _ = live_server
+        status, _, body = http_get("/")
+        assert status == 200
+        assert 'zone-sessions' in body
+        assert "Today's sessions" in body
+
+    def test_legacy_view_hides_session_timeline(self, live_server):
+        _, http_get, _, _ = live_server
+        status, _, body = http_get("/?view=legacy")
+        assert status == 200
+        # Legacy marker present; the session list markup is absent
+        # ("session-list" appears in the embedded stylesheet so we look
+        # for the list opener instead of the bare string).
+        assert "legacy view" in body
+        assert '<ul class="session-list">' not in body
