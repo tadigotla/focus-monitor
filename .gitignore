@@ -53,8 +53,11 @@ coverage.xml
 .claude/.session/
 
 # ---- Runtime data leakage guard ----
-# The real runtime dir is ~/.focus-monitor/ (outside the repo). This rule
-# catches the case where someone symlinks or copies it in.
+# The real runtime dir is ~/.focus-monitor/ (outside the repo). These rules
+# catch the case where someone symlinks or copies it in. The bare name
+# matches a symlink (git stores symlinks as files, not dirs); the trailing
+# slash form matches a real directory copy.
+/.focus-monitor
 .focus-monitor/
 
 # ---- Logs and temp ----
