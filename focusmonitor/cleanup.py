@@ -14,8 +14,12 @@ def cleanup_old_db_rows(cfg, db):
     c1 = db.execute("DELETE FROM activity_log WHERE timestamp < ?", (cutoff,))
     c2 = db.execute("DELETE FROM nudges WHERE timestamp < ?", (cutoff,))
     total = (c1.rowcount or 0) + (c2.rowcount or 0)
-    if total > 0:
-        db.commit()
+    # Always commit — even when 0 rows are deleted.  The DELETE
+    # statements start an implicit transaction that holds a RESERVED
+    # lock in WAL mode.  Without an unconditional commit the lock
+    # stays held on the long-lived monitor connection, blocking every
+    # write from the dashboard's correction/confirmation endpoints.
+    db.commit()
     return total
 
 

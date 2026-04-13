@@ -701,6 +701,21 @@ html, body {
 }
 
 .correct-toggle:checked ~ .correct-form { display: flex; }
+
+.verdict-badge {
+  font-size: var(--font-size-xs);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  vertical-align: middle;
+}
+.verdict-badge.confirmed {
+  background: var(--color-score-good);
+  color: #fff;
+}
+.verdict-badge.corrected {
+  background: var(--color-accent);
+  color: #fff;
+}
 """
 
 
@@ -715,6 +730,12 @@ DASHBOARD_TEMPLATE = string.Template("""<!DOCTYPE html>
 $refresh_meta<title>Focus Monitor — Dashboard</title>
 <style>$css</style>
 <script src="/static/htmx.min.js" defer></script>
+<script>
+document.addEventListener("csrf-refreshed", function(e) {
+  var t = (e.detail || {}).token;
+  if (t) document.body.setAttribute("hx-headers", JSON.stringify({"X-CSRF-Token": t}));
+});
+</script>
 </head>
 <body hx-headers='{"X-CSRF-Token": "$csrf_token"}'>
 <main class="container">
@@ -1225,6 +1246,8 @@ _USER_KIND_OPTIONS = (
     ("other", "Something else"),
 )
 
+_USER_KIND_LABELS = dict(_USER_KIND_OPTIONS)
+
 
 def _fmt_time_range(start_iso, end_iso):
     try:
@@ -1314,13 +1337,31 @@ def render_session_row(session, csrf_token):
     session_id = session.get("id")
     time_range = _fmt_time_range(session.get("start"), session.get("end"))
 
-    if kind == "away":
+    correction = session.get("user_correction")
+
+    if correction:
+        verdict = correction.get("verdict", "corrected")
+        user_task = correction.get("user_task")
+        user_kind = correction.get("user_kind", "other")
+        if verdict == "confirmed":
+            label = session.get("task") or "Dev work"
+            verdict_badge = '<span class="verdict-badge confirmed" title="Confirmed">✓</span>'
+        else:
+            if user_task:
+                label = user_task
+            else:
+                label = _USER_KIND_LABELS.get(user_kind, user_kind)
+            verdict_badge = '<span class="verdict-badge corrected" title="Corrected">✏️</span>'
+    elif kind == "away":
         label = "Away"
+        verdict_badge = ""
     elif kind == "unclear":
         label = "Unclear"
+        verdict_badge = ""
     else:
         task = session.get("task")
         label = task if task else "Dev work"
+        verdict_badge = ""
 
     name_conf = session.get("task_name_confidence", "low")
     boundary_conf = session.get("boundary_confidence", "low")
@@ -1347,7 +1388,7 @@ def render_session_row(session, csrf_token):
     evidence_html = _render_evidence_drawer(session.get("evidence") or [])
 
     actions_html = ""
-    if kind != "away" and session_id is not None:
+    if kind != "away" and session_id is not None and not correction:
         # The correction form lives OUTSIDE the session-actions flex
         # container. Keeping the form and the action buttons in the
         # same flex row caused click events on Save/Confirm to
@@ -1387,6 +1428,7 @@ def render_session_row(session, csrf_token):
         f'<div class="session-head">'
         f'<span class="session-time">{html.escape(time_range)}</span>'
         f'<span class="session-label">{html.escape(label)}</span>'
+        f'{verdict_badge}'
         f'{conf_block}'
         f'{meta}'
         f'</div>'
@@ -1417,6 +1459,37 @@ def render_session_timeline(sessions, csrf_token=""):
     )
 
 
+def _load_latest_corrections(db, session_ids):
+    """Return a dict mapping session_id → latest correction dict.
+
+    Only the most recent correction (by ``created_at``) per session is
+    returned. Sessions without corrections are absent from the dict.
+    """
+    if not session_ids:
+        return {}
+    placeholders = ",".join("?" for _ in session_ids)
+    rows = db.execute(
+        "SELECT c.entry_id, c.user_verdict, c.user_task, c.user_kind "
+        "FROM corrections c "
+        "INNER JOIN ("
+        "  SELECT entry_id, MAX(created_at) AS latest "
+        "  FROM corrections "
+        f"  WHERE entry_kind='session' AND entry_id IN ({placeholders}) "
+        "  GROUP BY entry_id"
+        ") sub ON c.entry_id = sub.entry_id AND c.created_at = sub.latest "
+        "WHERE c.entry_kind='session'",
+        list(session_ids),
+    ).fetchall()
+    result = {}
+    for entry_id, verdict, user_task, user_kind in rows:
+        result[entry_id] = {
+            "verdict": verdict,
+            "user_task": user_task,
+            "user_kind": user_kind,
+        }
+    return result
+
+
 def _load_sessions_for_range(start_iso, end_iso):
     """Read session rows from the DB and return dicts ready to render."""
     if not DB_PATH.exists():
@@ -1428,9 +1501,11 @@ def _load_sessions_for_range(start_iso, end_iso):
             "SELECT id, start, end, task, task_name_confidence, "
             "boundary_confidence, cycle_count, dip_count, evidence_json, "
             "kind FROM sessions "
-            "WHERE start >= ? AND start < ? ORDER BY start ASC",
+            "WHERE start >= ? AND start < ? ORDER BY start DESC",
             (start_iso, end_iso),
         ).fetchall()
+        session_ids = [r[0] for r in rows]
+        corrections = _load_latest_corrections(db, session_ids)
     finally:
         db.close()
     results = []
@@ -1443,7 +1518,7 @@ def _load_sessions_for_range(start_iso, end_iso):
             evidence = json.loads(evidence_json) if evidence_json else []
         except (json.JSONDecodeError, TypeError):
             evidence = []
-        results.append({
+        sess = {
             "id": row_id,
             "start": start,
             "end": end,
@@ -1454,7 +1529,10 @@ def _load_sessions_for_range(start_iso, end_iso):
             "dip_count": dip_count,
             "evidence": evidence,
             "kind": kind,
-        })
+        }
+        if row_id in corrections:
+            sess["user_correction"] = corrections[row_id]
+        results.append(sess)
     return results
 
 
@@ -1649,12 +1727,23 @@ def _send_error(handler, code, body=""):
         handler.wfile.write(body.encode("utf-8"))
 
 
-def _send_html_fragment(handler, fragment):
-    """Send an HTML fragment as a 200 response (for htmx swaps)."""
+def _send_html_fragment(handler, fragment, csrf_token=None):
+    """Send an HTML fragment as a 200 response (for htmx swaps).
+
+    When *csrf_token* is given, an ``HX-Trigger`` response header is
+    emitted so the client-side listener can update the page-level
+    ``hx-headers`` attribute with the fresh token.
+    """
     body = fragment.encode("utf-8")
     handler.send_response(200)
     handler.send_header("Content-Type", "text/html; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
+    if csrf_token:
+        import json as _json
+        handler.send_header(
+            "HX-Trigger",
+            _json.dumps({"csrf-refreshed": {"token": csrf_token}}),
+        )
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -1883,7 +1972,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_error(self, 409, "conflict: task with that name already exists")
             return
         fresh_csrf = _issue_csrf_token()
-        _send_html_fragment(self, _rerender_planned_card(fresh_csrf))
+        _send_html_fragment(self, _rerender_planned_card(fresh_csrf), csrf_token=fresh_csrf)
 
     def _handle_update_task(self, name_enc):
         from focusmonitor.tasks import update_planned_task
@@ -1902,7 +1991,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_error(self, 404, "not found: no task with that name")
             return
         fresh_csrf = _issue_csrf_token()
-        _send_html_fragment(self, _rerender_planned_card(fresh_csrf))
+        _send_html_fragment(self, _rerender_planned_card(fresh_csrf), csrf_token=fresh_csrf)
 
     def _handle_delete_task(self, name_enc):
         from focusmonitor.tasks import delete_planned_task
@@ -1914,7 +2003,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_error(self, 404, "not found: no task with that name")
             return
         fresh_csrf = _issue_csrf_token()
-        _send_html_fragment(self, _rerender_planned_card(fresh_csrf))
+        _send_html_fragment(self, _rerender_planned_card(fresh_csrf), csrf_token=fresh_csrf)
 
     def _handle_promote_discovery(self, name_enc):
         from focusmonitor.tasks import promote_discovered
@@ -1933,7 +2022,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # the Planned card comes back as an out-of-band swap.
         discovered_html = _rerender_discovered_card(fresh_csrf)
         planned_html = _rerender_planned_card(fresh_csrf, oob=True)
-        _send_html_fragment(self, discovered_html + planned_html)
+        _send_html_fragment(self, discovered_html + planned_html, csrf_token=fresh_csrf)
 
     def _handle_hide_discovery(self, name_enc):
         from focusmonitor.tasks import hide_discovered
@@ -1945,7 +2034,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             _send_error(self, 404, "not found: no discovered activity with that name")
             return
         fresh_csrf = _issue_csrf_token()
-        _send_html_fragment(self, _rerender_discovered_card(fresh_csrf))
+        _send_html_fragment(self, _rerender_discovered_card(fresh_csrf), csrf_token=fresh_csrf)
 
     def _handle_correct_session(self, session_id_str):
         import sys as _sys
@@ -2080,11 +2169,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         _consume_csrf_token(header_token or form_token)
 
         fresh_csrf = _issue_csrf_token()
-        # Re-render just the affected session row. The row content
-        # itself doesn't change — the correction is recorded in the
-        # append-only store — but we return a fresh fragment so htmx
-        # has something to swap in and the user sees the form close.
-        _send_html_fragment(self, render_session_row(session, fresh_csrf))
+        # Attach the correction to the session dict so the re-rendered
+        # row reflects the user's correction/confirmation immediately.
+        session["user_correction"] = {
+            "verdict": verdict,
+            "user_task": user_task,
+            "user_kind": user_kind,
+        }
+        _send_html_fragment(self, render_session_row(session, fresh_csrf), csrf_token=fresh_csrf)
 
     def log_message(self, format, *args):
         pass

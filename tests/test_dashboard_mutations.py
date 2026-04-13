@@ -920,6 +920,56 @@ class TestSessionEndpoints:
         )
         assert status2 == 403
 
+    def test_successive_corrections_use_refreshed_csrf(self, live_server):
+        """Two corrections back-to-back without a page reload.
+
+        The HX-Trigger header carries the fresh CSRF token. A real
+        browser's htmx listener would update ``hx-headers`` on
+        ``<body>``; here we parse the header manually and use the
+        fresh token for the second POST. Both must return 200.
+        """
+        sid = self._seed_db_session()
+        # Create a second session for the second correction.
+        db = init_db()
+        try:
+            sid2 = _seed_session_row(db)
+        finally:
+            db.close()
+        _, _, http_post, scrape_csrf = live_server
+
+        csrf1 = scrape_csrf()
+        status1, headers1, _ = http_post(
+            f"/api/sessions/{sid}/correct",
+            {"csrf": csrf1, "user_kind": "on_planned_task"},
+        )
+        assert status1 == 200
+
+        # Extract fresh CSRF from HX-Trigger header.
+        hx_trigger = headers1.get("HX-Trigger")
+        assert hx_trigger is not None, "expected HX-Trigger header in response"
+        trigger_data = json.loads(hx_trigger)
+        csrf2 = trigger_data["csrf-refreshed"]["token"]
+        assert csrf2 != csrf1, "fresh token must differ from consumed token"
+
+        status2, _, body2 = http_post(
+            f"/api/sessions/{sid2}/correct",
+            {"csrf": csrf2, "user_kind": "meeting", "user_note": "standup"},
+        )
+        assert status2 == 200, (
+            f"second correction with refreshed CSRF should succeed, "
+            f"got {status2}: {body2[:200]}"
+        )
+
+        # Verify both corrections persisted.
+        db = sqlite3.connect(str(config.DB_PATH))
+        rows = db.execute(
+            "SELECT entry_id, user_verdict FROM corrections "
+            "ORDER BY created_at",
+        ).fetchall()
+        db.close()
+        assert len(rows) == 2
+        assert {r[0] for r in rows} == {sid, sid2}
+
 
 class TestLegacyView:
 

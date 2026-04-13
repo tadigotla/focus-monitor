@@ -612,8 +612,29 @@
   }
   
   .correct-toggle:checked ~ .correct-form { display: flex; }
+  
+  .verdict-badge {
+    font-size: var(--font-size-xs);
+    padding: 1px var(--space-1);
+    border-radius: var(--radius-sm);
+    vertical-align: middle;
+  }
+  .verdict-badge.confirmed {
+    background: var(--color-score-good);
+    color: #fff;
+  }
+  .verdict-badge.corrected {
+    background: var(--color-accent);
+    color: #fff;
+  }
   </style>
   <script src="/static/htmx.min.js" defer></script>
+  <script>
+  document.addEventListener("csrf-refreshed", function(e) {
+    var t = (e.detail || {}).token;
+    if (t) document.body.setAttribute("hx-headers", JSON.stringify({"X-CSRF-Token": t}));
+  });
+  </script>
   </head>
   <body hx-headers='{"X-CSRF-Token": "TEST_CSRF_TOKEN_FIXED_VALUE_FOR_SNAPSHOT_STABILITY_DO_NOT_USE_IN_PROD"}'>
   <main class="container">
@@ -1270,8 +1291,29 @@
   }
   
   .correct-toggle:checked ~ .correct-form { display: flex; }
+  
+  .verdict-badge {
+    font-size: var(--font-size-xs);
+    padding: 1px var(--space-1);
+    border-radius: var(--radius-sm);
+    vertical-align: middle;
+  }
+  .verdict-badge.confirmed {
+    background: var(--color-score-good);
+    color: #fff;
+  }
+  .verdict-badge.corrected {
+    background: var(--color-accent);
+    color: #fff;
+  }
   </style>
   <script src="/static/htmx.min.js" defer></script>
+  <script>
+  document.addEventListener("csrf-refreshed", function(e) {
+    var t = (e.detail || {}).token;
+    if (t) document.body.setAttribute("hx-headers", JSON.stringify({"X-CSRF-Token": t}));
+  });
+  </script>
   </head>
   <body hx-headers='{"X-CSRF-Token": "TEST_CSRF_TOKEN_FIXED_VALUE_FOR_SNAPSHOT_STABILITY_DO_NOT_USE_IN_PROD"}'>
   <main class="container">
