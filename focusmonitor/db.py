@@ -81,5 +81,14 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_sessions_range "
         "ON sessions (start, end)"
     )
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS pending_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            collected_at TEXT NOT NULL,
+            screenshot_path TEXT,
+            aw_events_json TEXT NOT NULL,
+            processed INTEGER DEFAULT 0
+        )
+    """)
     db.commit()
     return db

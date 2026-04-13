@@ -507,12 +507,15 @@ Respond in this EXACT JSON format and NOTHING else (no markdown, no explanation)
 }}"""
 
 
-def run_analysis(cfg, db):
+def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None):
     """Pull AW data + screenshots, ask Ollama to classify activity."""
     cycle_end_dt = datetime.now()
     print(f"\n🔍 Running analysis at {cycle_end_dt.strftime('%H:%M:%S')} ...")
 
-    events = get_aw_events(cfg, minutes=cfg["analysis_interval_sec"] // 60)
+    if prefetched_events is not None:
+        events = prefetched_events
+    else:
+        events = get_aw_events(cfg, minutes=cfg["analysis_interval_sec"] // 60)
     top_apps, top_titles = summarize_aw_events(events)
     tasks = load_planned_tasks()
 
@@ -532,7 +535,10 @@ def run_analysis(cfg, db):
     else:
         task_list = "  (none specified)"
 
-    all_screenshots = recent_screenshots(cfg)
+    if prefetched_screenshots is not None:
+        all_screenshots = prefetched_screenshots
+    else:
+        all_screenshots = recent_screenshots(cfg)
     screenshots = deduplicate_screenshots(
         all_screenshots, cfg["dedup_size_threshold_pct"]
     )
@@ -663,6 +669,81 @@ def run_analysis(cfg, db):
         print(f"  ⚠️  Distractions: {', '.join(result['distractions'])}")
 
     update_discovered_activities(result["projects"], top_titles, tasks)
-    check_nudges(cfg, db, result)
+    if not cfg.get("batch_analysis", False):
+        check_nudges(cfg, db, result)
 
     return result
+
+
+def batch_analyze(cfg, db):
+    """Process all pending collection data in analysis-interval-sized windows."""
+    rows = db.execute(
+        "SELECT id, collected_at, screenshot_path, aw_events_json "
+        "FROM pending_data WHERE processed = 0 ORDER BY collected_at"
+    ).fetchall()
+
+    if not rows:
+        print("\n📦 Batch: no pending data to process.")
+        return
+
+    print(f"\n📦 Batch: processing {len(rows)} pending rows...")
+
+    window_sec = cfg["analysis_interval_sec"]
+    windows = []
+    current_window = []
+    window_start = None
+
+    for row in rows:
+        row_id, collected_at, screenshot_path, aw_json = row
+        if window_start is None:
+            window_start = collected_at
+        elapsed = (
+            datetime.fromisoformat(collected_at)
+            - datetime.fromisoformat(window_start)
+        ).total_seconds()
+        if elapsed >= window_sec and current_window:
+            windows.append(current_window)
+            current_window = []
+            window_start = collected_at
+        current_window.append(row)
+
+    if current_window:
+        windows.append(current_window)
+
+    print(f"  📊 Grouped into {len(windows)} analysis windows")
+
+    for i, window in enumerate(windows):
+        row_ids = []
+        merged_events = []
+        screenshot_paths = []
+        for row_id, collected_at, screenshot_path, aw_json in window:
+            row_ids.append(row_id)
+            try:
+                events = json.loads(aw_json)
+                if isinstance(events, list):
+                    merged_events.extend(events)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            if screenshot_path:
+                from pathlib import Path
+                p = Path(screenshot_path)
+                if p.exists():
+                    screenshot_paths.append(p)
+
+        print(f"\n  📦 Window {i + 1}/{len(windows)}: "
+              f"{len(window)} rows, {len(screenshot_paths)} screenshots")
+
+        run_analysis(
+            cfg, db,
+            prefetched_events=merged_events,
+            prefetched_screenshots=screenshot_paths or None,
+        )
+
+        placeholders = ",".join("?" for _ in row_ids)
+        db.execute(
+            f"UPDATE pending_data SET processed = 1 WHERE id IN ({placeholders})",
+            row_ids,
+        )
+        db.commit()
+
+    print(f"\n  ✅ Batch complete: {len(windows)} windows processed")

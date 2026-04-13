@@ -46,6 +46,12 @@ DEFAULT_CONFIG = {
     # When false, skip session aggregation and render the legacy
     # per-cycle view. Useful as a diagnostic escape hatch.
     "session_aggregation_enabled": True,
+    # When true, the main loop collects data only (screenshots + AW
+    # snapshots) and defers LLM analysis to scheduled batch windows.
+    "batch_analysis": False,
+    # Clock times (HH:MM, 24-hour) at which batch processing fires.
+    # Only used when batch_analysis is true.
+    "batch_schedule": ["07:00", "12:00", "15:00", "18:00", "20:00"],
 }
 
 DEFAULT_PLANNED_TASKS = [

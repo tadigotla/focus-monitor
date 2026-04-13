@@ -66,6 +66,8 @@ The classification pipeline SHALL include the N most recent records (any verdict
 
 The retrieval SHALL be a single SQL query of the form `SELECT ... FROM corrections ORDER BY created_at DESC LIMIT ?` with no scoring, no similarity calculation, and no embedding lookup. Adding similarity-based retrieval is explicitly out of scope for this change.
 
+When `batch_analysis` is `True`, the few-shot retrieval still operates identically. Corrections filed between batch runs are visible to the next batch run's analysis cycles. The feedback latency increases from ~1 hour to ~2–3 hours but the mechanism is unchanged.
+
 #### Scenario: Most recent N records retrieved
 - **WHEN** the classification pipeline runs and the `corrections` table has more than N records
 - **THEN** the N records with the most recent `created_at` are pulled
@@ -79,6 +81,11 @@ The retrieval SHALL be a single SQL query of the form `SELECT ... FROM correctio
 #### Scenario: N is zero
 - **WHEN** `corrections_few_shot_n` is `0`
 - **THEN** no query is issued and no few-shot section is rendered
+
+#### Scenario: Corrections filed between batch runs
+- **WHEN** the user corrects a session at 1:00 PM
+- **AND** the next batch runs at 3:00 PM
+- **THEN** the 1:00 PM correction appears in the few-shot block for all analysis cycles in the 3:00 PM batch
 
 ### Requirement: Correction-loop write API
 The system SHALL expose a Python function (e.g. `record_correction(entry_kind, entry_id, model_state, user_state)`) in a `focusmonitor.corrections` module that:
@@ -136,3 +143,22 @@ Cassettes used in tests for the corrections-related code paths SHALL be captured
 - **WHEN** the corrections module opens the database
 - **THEN** the path is obtained from `focusmonitor.config`
 - **AND** is not a hardcoded string
+
+### Requirement: CSRF token refresh after correction submission
+After a successful correction or confirmation POST, the server SHALL return a fresh CSRF token that is usable by subsequent htmx requests without a full page reload. The page-level `hx-headers` CSRF token SHALL be updated to match the fresh token so that all htmx-driven mutation endpoints continue to work.
+
+#### Scenario: Second correction succeeds after first
+- **WHEN** the user submits a correction for session A (succeeds)
+- **AND** then submits a correction for session B without reloading the page
+- **THEN** the second submission also succeeds (200, not 403)
+- **AND** the correction row for session B is persisted
+
+#### Scenario: Confirmation after correction succeeds
+- **WHEN** the user submits a correction for session A (succeeds)
+- **AND** then clicks Confirm on session B without reloading the page
+- **THEN** the confirmation succeeds (200, not 403)
+
+#### Scenario: Token propagated via htmx mechanism
+- **WHEN** a correction POST returns successfully
+- **THEN** the response includes a mechanism (e.g. HX-Trigger header) that causes the page-level htmx CSRF header to update
+- **AND** no full page reload is required

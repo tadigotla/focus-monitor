@@ -54,6 +54,15 @@ def get_aw_events(cfg, minutes=30):
         return []
 
 
+def snapshot_aw_events(cfg, minutes=5):
+    """Capture raw AW events for a time window, intended for deferred storage.
+
+    Returns the same event list as get_aw_events. Separated so callers
+    can signal intent (snapshot-for-later vs. analyze-now).
+    """
+    return get_aw_events(cfg, minutes=minutes)
+
+
 def summarize_aw_events(events):
     """Condense raw AW events into a readable summary."""
     apps = {}
