@@ -22,6 +22,7 @@ is opened — pytest-socket doesn't see it.
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 import pytest
@@ -141,3 +142,50 @@ class TestQueryOllamaFailurePaths:
         cfg = DEFAULT_CONFIG.copy()
         cfg["ollama_url"] = "http://127.0.0.1:1"
         assert query_ollama(cfg, "describe", image_paths=[RED_PIXEL]) is None
+
+
+# ── query_ollama: payload verification ───────────────────────────────────────
+
+class TestQueryOllamaPayload:
+    """Verify the request payload structure without hitting a real server."""
+
+    def test_keep_alive_included_in_payload(self, monkeypatch):
+        """The keep_alive field from config must appear in the API payload."""
+        import focusmonitor.ollama as ollama_mod
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data)
+            # Return a minimal valid response
+            import io
+            resp = io.BytesIO(json.dumps({"response": "ok"}).encode())
+            return resp
+
+        monkeypatch.setattr(ollama_mod, "urlopen", fake_urlopen)
+
+        cfg = DEFAULT_CONFIG.copy()
+        query_ollama(cfg, "test prompt")
+
+        assert "body" in captured
+        assert captured["body"]["keep_alive"] == "30s"
+
+    def test_keep_alive_uses_custom_config_value(self, monkeypatch):
+        """A user-provided ollama_keep_alive value is passed through."""
+        import focusmonitor.ollama as ollama_mod
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data)
+            import io
+            resp = io.BytesIO(json.dumps({"response": "ok"}).encode())
+            return resp
+
+        monkeypatch.setattr(ollama_mod, "urlopen", fake_urlopen)
+
+        cfg = DEFAULT_CONFIG.copy()
+        cfg["ollama_keep_alive"] = "5m"
+        query_ollama(cfg, "test prompt")
+
+        assert captured["body"]["keep_alive"] == "5m"

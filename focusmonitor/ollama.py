@@ -17,6 +17,7 @@ def query_ollama(cfg, prompt, image_paths=None):
         "model": cfg["ollama_model"],
         "prompt": prompt,
         "stream": False,
+        "keep_alive": cfg.get("ollama_keep_alive", "30s"),
     }
     if image_paths:
         payload["images"] = [encode_image(p) for p in image_paths]

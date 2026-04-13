@@ -13,14 +13,15 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 LOG_DIR = CONFIG_DIR / "logs"
 
 DEFAULT_CONFIG = {
-    "screenshot_interval_sec": 120,
-    "analysis_interval_sec": 1800,
+    "screenshot_interval_sec": 300,
+    "analysis_interval_sec": 3600,
     "nudge_after_hours": 2,
     "screenshot_keep_hours": 48,
     "ollama_model": "llama3.2-vision",
     "ollama_url": "http://localhost:11434",
     "activitywatch_url": "http://localhost:5600",
-    "screenshots_per_analysis": 6,
+    "ollama_keep_alive": "30s",
+    "screenshots_per_analysis": 12,
     "max_parse_retries": 1,
     "dedup_size_threshold_pct": 2,
     "two_pass_analysis": True,
