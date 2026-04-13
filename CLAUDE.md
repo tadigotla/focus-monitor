@@ -25,8 +25,12 @@ entire product promise — treat it as a hard invariant, not a nice-to-have.
 ## Where things live
 
 - `focusmonitor/` — importable package. Modules split by concern:
-  `activitywatch.py`, `analysis.py`, `cleanup.py`, `config.py`, `dashboard.py`,
-  `db.py`, `main.py`, `nudges.py`, `ollama.py`, `screenshots.py`, `tasks.py`.
+  `activitywatch.py`, `analysis.py`, `cleanup.py`, `config.py`, `corrections.py`,
+  `dashboard.py`, `db.py`, `install.py`, `main.py`, `nudges.py`, `ollama.py`,
+  `screenshots.py`, `sessions.py`, `tasks.py`.
+- `focusmonitor/static/` — vendored browser assets (htmx). Served locally
+  because the no-CDN network policy forbids loading scripts from the internet.
+  `PROVENANCE.md` tracks origin, version, and SHA256 for each file.
 - `monitor.py`, `dashboard.py`, `cli.py`, `setup.py` — top-level entrypoints.
 - `tests/` — pytest suite. Subdirectory layout:
   - `tests/test_*.py` — test files (pytest discovers these)
@@ -128,9 +132,26 @@ would defeat the privacy invariant. To add an MCP server, update this file
 *and* add a "Privacy impact" section to the openspec proposal that introduces
 it.
 
+## OpenSpec workflow
+
+Changes to the project follow a structured propose → design → implement →
+archive flow driven by the `openspec` CLI. Configuration lives in
+`openspec/config.yaml`; completed changes are date-stamped and moved to
+`openspec/changes/archive/`.
+
+If you don't have the CLI installed, set it up with:
+
+```
+npm install -g @fission-ai/openspec
+```
+
+This is a one-time developer-machine install (similar to the pip venv
+setup). It is **not** a runtime dependency and is never invoked by
+focus-monitor itself.
+
 ## Project-local skills
 
-Two skills live under `.claude/skills/` and should be used where they fit:
+Skills under `.claude/skills/`:
 
 - `privacy-review` — before committing a change, run this over the diff to
   catch privacy regressions (non-localhost URLs, new outbound-HTTP imports,
@@ -139,8 +160,15 @@ Two skills live under `.claude/skills/` and should be used where they fit:
   results. Also hosts the cassette re-record sub-workflow for Ollama and
   ActivityWatch, with step-by-step privacy-review instructions.
 
-Everything else should go through base Claude behavior. Don't add more skills
-unless the workflow is genuinely unique to this repo.
+Skills under `.github/skills/` (OpenSpec workflow):
+
+- `openspec-propose` — scaffold a new change with proposal, design, and tasks.
+- `openspec-apply-change` — implement tasks from an existing change.
+- `openspec-archive-change` — archive a completed change.
+- `openspec-explore` — thinking-partner mode for exploring ideas before or
+  during a change.
+
+Don't add more skills unless the workflow is genuinely unique to this repo.
 
 ## Style
 
