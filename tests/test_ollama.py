@@ -229,3 +229,52 @@ class TestQueryOllamaPayload:
 
         assert "options" not in captured["body"]
         assert "format" not in captured["body"]
+
+    def test_return_timing_true_returns_tuple(self, monkeypatch):
+        """return_timing=True returns (str, float) with elapsed_ms > 0."""
+        import focusmonitor.ollama as ollama_mod
+
+        def fake_urlopen(req, timeout=None):
+            import io
+            return io.BytesIO(json.dumps({"response": "ok"}).encode())
+
+        monkeypatch.setattr(ollama_mod, "urlopen", fake_urlopen)
+
+        cfg = DEFAULT_CONFIG.copy()
+        result = query_ollama(cfg, "test prompt", return_timing=True)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        text, elapsed_ms = result
+        assert isinstance(text, str)
+        assert text == "ok"
+        assert isinstance(elapsed_ms, float)
+        assert elapsed_ms >= 0
+
+    def test_return_timing_false_returns_string(self, monkeypatch):
+        """return_timing=False (default) returns a plain string."""
+        import focusmonitor.ollama as ollama_mod
+
+        def fake_urlopen(req, timeout=None):
+            import io
+            return io.BytesIO(json.dumps({"response": "ok"}).encode())
+
+        monkeypatch.setattr(ollama_mod, "urlopen", fake_urlopen)
+
+        cfg = DEFAULT_CONFIG.copy()
+        result = query_ollama(cfg, "test prompt")
+
+        assert isinstance(result, str)
+        assert result == "ok"
+
+    def test_return_timing_on_failure_returns_none_with_elapsed(self):
+        """Unreachable port with return_timing=True returns (None, float)."""
+        cfg = DEFAULT_CONFIG.copy()
+        cfg["ollama_url"] = "http://127.0.0.1:1"
+        result = query_ollama(cfg, "anything", return_timing=True)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert result[0] is None
+        assert isinstance(result[1], float)
+        assert result[1] >= 0

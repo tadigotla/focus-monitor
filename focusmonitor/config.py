@@ -52,6 +52,12 @@ DEFAULT_CONFIG = {
     # Clock times (HH:MM, 24-hour) at which batch processing fires.
     # Only used when batch_analysis is true.
     "batch_schedule": ["07:00", "12:00", "15:00", "18:00", "20:00"],
+    # When true, run_analysis writes full prompt text, raw responses,
+    # timing, and few-shot context to the analysis_traces table. Used
+    # by the Scope companion for AI decision inspection.
+    "trace_logging": True,
+    # Port for the Scope API server (AI decision inspector companion).
+    "scope_api_port": 9877,
 }
 
 DEFAULT_PLANNED_TASKS = [

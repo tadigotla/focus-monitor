@@ -273,7 +273,7 @@ def _coerce_artifact(parsed, raw_fallback):
     return artifact
 
 
-def extract_screenshot_artifacts(cfg, screenshots):
+def extract_screenshot_artifacts(cfg, screenshots, _trace=None):
     """Pass 1 (structured): return a typed artifact per screenshot.
 
     For each screenshot, query Ollama with the structured extraction
@@ -281,11 +281,28 @@ def extract_screenshot_artifacts(cfg, screenshots):
     the result into the canonical artifact shape. When parsing fails
     outright, emit a fallback artifact whose `one_line_action` carries
     the raw response and whose other fields are `null` — never raise.
+
+    When `_trace` is a dict, populate it with Pass 1 data for the
+    analysis_traces table: `pass1_prompt`, `pass1_responses`, and
+    `pass1_elapsed_ms`.
     """
+    if _trace is not None:
+        _trace["pass1_prompt"] = _EXTRACTION_PROMPT
+        _trace["pass1_responses"] = []
+        _trace["pass1_elapsed_ms"] = []
+
     artifacts = []
+    use_timing = _trace is not None
     for path in screenshots:
-        raw = query_ollama(cfg, _EXTRACTION_PROMPT, image_paths=[path],
-                          temperature=0.0, format_="json")
+        result = query_ollama(cfg, _EXTRACTION_PROMPT, image_paths=[path],
+                              temperature=0.0, format_="json",
+                              return_timing=use_timing)
+        if use_timing:
+            raw, elapsed = result
+            _trace["pass1_responses"].append(raw)
+            _trace["pass1_elapsed_ms"].append(elapsed)
+        else:
+            raw = result
         parsed = parse_analysis_json(raw) if raw else None
         artifact = _coerce_artifact(parsed, raw)
         artifacts.append(artifact)
@@ -553,11 +570,17 @@ def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None
         db, int(cfg.get("corrections_few_shot_n", 5))
     )
 
+    trace_enabled = cfg.get("trace_logging", True)
+    trace = {} if trace_enabled else None
+    pass2_elapsed = None
+
     pass1_artifacts = None
     if cfg["two_pass_analysis"] and screenshots:
         if cfg.get("pass1_structured", True):
             print("  🔬 Pass 1: Extracting structured artifacts...")
-            pass1_artifacts = extract_screenshot_artifacts(cfg, screenshots)
+            pass1_artifacts = extract_screenshot_artifacts(
+                cfg, screenshots, _trace=trace,
+            )
             print("  🧠 Pass 2: Classifying activity...")
             prompt = build_classification_prompt(
                 cfg, app_summary, title_summary, task_list,
@@ -573,7 +596,12 @@ def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None
                 history_text, screenshot_descriptions=descriptions,
                 corrections=few_shot_corrections,
             )
-        raw = query_ollama(cfg, prompt, temperature=0.0, format_="json")
+        if trace_enabled:
+            result_p2 = query_ollama(cfg, prompt, temperature=0.0,
+                                     format_="json", return_timing=True)
+            raw, pass2_elapsed = result_p2
+        else:
+            raw = query_ollama(cfg, prompt, temperature=0.0, format_="json")
     else:
         prompt = build_classification_prompt(
             cfg, app_summary, title_summary, task_list, history_text,
@@ -584,14 +612,23 @@ def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None
             image_paths=screenshots if screenshots else None
         )
 
+    if trace_enabled:
+        trace["pass2_prompt"] = prompt
+        trace["pass2_response_raw"] = raw
+        trace["pass2_elapsed_ms"] = pass2_elapsed
+        trace["few_shot_ids"] = [r.get("id") for r in few_shot_corrections if r.get("id") is not None]
+        trace["screenshot_paths"] = [str(p) for p in screenshots] if screenshots else []
+
     if not raw:
         print("  ⚠️  No response from Ollama, skipping.")
         return
 
+    parse_retries = 0
     result = parse_analysis_json(raw)
     if result is None:
         max_retries = cfg["max_parse_retries"]
         for attempt in range(max_retries):
+            parse_retries += 1
             print(f"  🔄 JSON parse failed, retry {attempt + 1}/{max_retries}...")
             retry_prompt = (
                 "Your previous response was not valid JSON. "
@@ -638,7 +675,7 @@ def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None
     # fields (task, evidence, boundary/name confidence, needs_user_input)
     # are always present for downstream readers — matching the shape the
     # dashboard and history helpers already expect.
-    db.execute("""
+    cursor = db.execute("""
         INSERT INTO activity_log (timestamp, window_titles, apps_used,
             project_detected, is_distraction, summary, raw_response)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -651,7 +688,36 @@ def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None
         result["summary"],
         json.dumps(result),
     ))
+    activity_log_id = cursor.lastrowid
     db.commit()
+
+    if trace_enabled and trace is not None:
+        try:
+            db.execute("""
+                INSERT INTO analysis_traces (
+                    activity_log_id, created_at,
+                    pass1_prompts_json, pass1_responses_json,
+                    pass1_elapsed_ms_json,
+                    pass2_prompt, pass2_response_raw, pass2_elapsed_ms,
+                    few_shot_ids_json, screenshot_paths_json,
+                    parse_retries
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                activity_log_id,
+                cycle_end_iso,
+                json.dumps(trace.get("pass1_prompt")),
+                json.dumps(trace.get("pass1_responses")),
+                json.dumps(trace.get("pass1_elapsed_ms")),
+                trace.get("pass2_prompt"),
+                trace.get("pass2_response_raw"),
+                trace.get("pass2_elapsed_ms"),
+                json.dumps(trace.get("few_shot_ids", [])),
+                json.dumps(trace.get("screenshot_paths", [])),
+                parse_retries,
+            ))
+            db.commit()
+        except Exception as e:
+            print(f"  ⚠️  Trace logging failed: {e}")
 
     # Re-aggregate today's sessions. Cheap for the small per-day
     # corpus (≤ 100 cycles); idempotent by design. Failures here

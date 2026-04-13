@@ -30,6 +30,15 @@ def _make_schema(db):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TEXT, task TEXT, message TEXT
     )""")
+    db.execute("""CREATE TABLE analysis_traces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        activity_log_id INTEGER, created_at TEXT,
+        pass1_prompts_json TEXT, pass1_responses_json TEXT,
+        pass1_elapsed_ms_json TEXT, pass2_prompt TEXT,
+        pass2_response_raw TEXT, pass2_elapsed_ms REAL,
+        few_shot_ids_json TEXT, screenshot_paths_json TEXT,
+        parse_retries INTEGER DEFAULT 0
+    )""")
 
 
 @pytest.fixture
@@ -63,6 +72,24 @@ class TestCleanupOldDbRows:
 
     def test_disabled_returns_zero(self, memdb):
         assert cleanup.cleanup_old_db_rows({"db_retention_days": 0}, memdb) == 0
+
+    def test_deletes_old_analysis_traces(self, memdb):
+        old_ts = (datetime.now() - timedelta(days=60)).isoformat()
+        recent_ts = (datetime.now() - timedelta(days=5)).isoformat()
+
+        memdb.execute(
+            "INSERT INTO analysis_traces (activity_log_id, created_at, pass2_prompt) "
+            "VALUES (1, ?, 'old prompt')", (old_ts,)
+        )
+        memdb.execute(
+            "INSERT INTO analysis_traces (activity_log_id, created_at, pass2_prompt) "
+            "VALUES (2, ?, 'recent prompt')", (recent_ts,)
+        )
+        memdb.commit()
+
+        deleted = cleanup.cleanup_old_db_rows({"db_retention_days": 30}, memdb)
+        assert deleted >= 1  # at least the old trace row
+        assert memdb.execute("SELECT COUNT(*) FROM analysis_traces").fetchone()[0] == 1
 
     def test_custom_retention_days(self, memdb):
         ts_5d = (datetime.now() - timedelta(days=5)).isoformat()

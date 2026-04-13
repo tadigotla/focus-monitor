@@ -375,6 +375,32 @@ class TestExtractScreenshotArtifacts:
         assert captured_kwargs.get("temperature") == 0.0
         assert captured_kwargs.get("format_") == "json"
 
+    def test_trace_dict_populated_when_provided(self, monkeypatch):
+        """When _trace dict is passed, it is populated with Pass 1 data."""
+        call_count = 0
+
+        def spy(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if kwargs.get("return_timing"):
+                return (json.dumps({"one_line_action": f"action {call_count}"}), 42.5)
+            return json.dumps({"one_line_action": f"action {call_count}"})
+
+        monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy)
+        fixtures = [
+            FIXTURE_DIR / "screen_20260412_100000.png",
+            FIXTURE_DIR / "screen_20260412_100100.png",
+        ]
+        trace = {}
+        extract_screenshot_artifacts(self._make_cfg(), fixtures, _trace=trace)
+
+        assert "pass1_prompt" in trace
+        assert isinstance(trace["pass1_prompt"], str)
+        assert len(trace["pass1_prompt"]) > 0
+        assert len(trace["pass1_responses"]) == 2
+        assert len(trace["pass1_elapsed_ms"]) == 2
+        assert all(isinstance(ms, float) for ms in trace["pass1_elapsed_ms"])
+
 
 # ── validate_analysis_result ─────────────────────────────────────────────────
 
@@ -953,6 +979,8 @@ class TestRunAnalysisOllamaKwargs:
 
         def spy_ollama(cfg, prompt, image_paths=None, **kwargs):
             calls.append(kwargs.copy())
+            if kwargs.get("return_timing"):
+                return (self._VALID_RESPONSE, 1.0)
             return self._VALID_RESPONSE
 
         monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy_ollama)
@@ -968,6 +996,15 @@ class TestRunAnalysisOllamaKwargs:
             "timestamp TEXT, window_titles TEXT, apps_used TEXT, "
             "project_detected TEXT, is_distraction INTEGER, "
             "summary TEXT, raw_response TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE analysis_traces ("
+            "id INTEGER PRIMARY KEY, activity_log_id INTEGER, "
+            "created_at TEXT, pass1_prompts_json TEXT, "
+            "pass1_responses_json TEXT, pass1_elapsed_ms_json TEXT, "
+            "pass2_prompt TEXT, pass2_response_raw TEXT, "
+            "pass2_elapsed_ms REAL, few_shot_ids_json TEXT, "
+            "screenshot_paths_json TEXT, parse_retries INTEGER DEFAULT 0)"
         )
 
         run_analysis(
@@ -993,6 +1030,8 @@ class TestRunAnalysisOllamaKwargs:
 
         def spy_ollama(cfg, prompt, image_paths=None, **kwargs):
             calls.append(kwargs.copy())
+            if kwargs.get("return_timing"):
+                return (self._VALID_RESPONSE, 1.0)
             return self._VALID_RESPONSE
 
         monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy_ollama)
@@ -1005,6 +1044,15 @@ class TestRunAnalysisOllamaKwargs:
             "project_detected TEXT, is_distraction INTEGER, "
             "summary TEXT, raw_response TEXT)"
         )
+        db.execute(
+            "CREATE TABLE analysis_traces ("
+            "id INTEGER PRIMARY KEY, activity_log_id INTEGER, "
+            "created_at TEXT, pass1_prompts_json TEXT, "
+            "pass1_responses_json TEXT, pass1_elapsed_ms_json TEXT, "
+            "pass2_prompt TEXT, pass2_response_raw TEXT, "
+            "pass2_elapsed_ms REAL, few_shot_ids_json TEXT, "
+            "screenshot_paths_json TEXT, parse_retries INTEGER DEFAULT 0)"
+        )
 
         run_analysis(
             self._make_cfg(two_pass=False), db,
@@ -1015,3 +1063,139 @@ class TestRunAnalysisOllamaKwargs:
         assert len(calls) >= 1
         assert "temperature" not in calls[0]
         assert "format_" not in calls[0]
+
+
+# ── run_analysis: trace logging ──────────────────────────────────────────────
+
+class TestRunAnalysisTraceLogging:
+    """Verify that run_analysis writes/skips analysis_traces rows."""
+
+    _VALID_RESPONSE = json.dumps({
+        "projects": ["test"],
+        "planned_match": [],
+        "distractions": [],
+        "summary": "testing",
+        "focus_score": 50,
+        "task": "test",
+        "evidence": [],
+        "boundary_confidence": "medium",
+        "name_confidence": "medium",
+        "needs_user_input": False,
+    })
+
+    def _make_cfg(self, trace_logging=True):
+        cfg = DEFAULT_CONFIG.copy()
+        cfg["two_pass_analysis"] = True
+        cfg["pass1_structured"] = True
+        cfg["analysis_interval_sec"] = 300
+        cfg["history_window"] = 0
+        cfg["session_aggregation_enabled"] = False
+        cfg["trace_logging"] = trace_logging
+        return cfg
+
+    def _stub_deps(self, monkeypatch):
+        monkeypatch.setattr(
+            "focusmonitor.analysis.get_aw_events", lambda *a, **kw: []
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.summarize_aw_events",
+            lambda events: ([], []),
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.load_planned_tasks", lambda: []
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.recent_corrections", lambda *a, **kw: []
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.deduplicate_screenshots",
+            lambda paths, pct: paths,
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.update_discovered_activities",
+            lambda *a: None,
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.check_nudges", lambda *a: None
+        )
+
+    def _make_db(self):
+        import sqlite3
+        db = sqlite3.connect(":memory:")
+        db.execute(
+            "CREATE TABLE activity_log (id INTEGER PRIMARY KEY, "
+            "timestamp TEXT, window_titles TEXT, apps_used TEXT, "
+            "project_detected TEXT, is_distraction INTEGER, "
+            "summary TEXT, raw_response TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE analysis_traces ("
+            "id INTEGER PRIMARY KEY, activity_log_id INTEGER, "
+            "created_at TEXT, pass1_prompts_json TEXT, "
+            "pass1_responses_json TEXT, pass1_elapsed_ms_json TEXT, "
+            "pass2_prompt TEXT, pass2_response_raw TEXT, "
+            "pass2_elapsed_ms REAL, few_shot_ids_json TEXT, "
+            "screenshot_paths_json TEXT, parse_retries INTEGER DEFAULT 0)"
+        )
+        return db
+
+    def test_trace_row_written_when_enabled(self, monkeypatch, tmp_path):
+        """With trace_logging=True, a row is written to analysis_traces."""
+        self._stub_deps(monkeypatch)
+
+        def spy_ollama(cfg, prompt, image_paths=None, **kwargs):
+            if kwargs.get("return_timing"):
+                return (self._VALID_RESPONSE, 42.0)
+            return self._VALID_RESPONSE
+
+        monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy_ollama)
+
+        fake_screenshot = tmp_path / "screen.png"
+        fake_screenshot.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+        db = self._make_db()
+        run_analysis(
+            self._make_cfg(trace_logging=True), db,
+            prefetched_events=[],
+            prefetched_screenshots=[fake_screenshot],
+        )
+
+        # activity_log row must exist
+        al_rows = db.execute("SELECT id FROM activity_log").fetchall()
+        assert len(al_rows) == 1
+        al_id = al_rows[0][0]
+
+        # analysis_traces row must exist and link to activity_log
+        trace_rows = db.execute(
+            "SELECT activity_log_id, pass2_prompt, pass2_response_raw, "
+            "screenshot_paths_json, parse_retries "
+            "FROM analysis_traces"
+        ).fetchall()
+        assert len(trace_rows) == 1
+        row = trace_rows[0]
+        assert row[0] == al_id  # activity_log_id matches
+        assert row[1] is not None and len(row[1]) > 0  # pass2_prompt non-empty
+        assert row[2] is not None  # pass2_response_raw
+        # screenshot_paths_json is valid JSON array
+        paths = json.loads(row[3])
+        assert isinstance(paths, list)
+        assert row[4] == 0  # parse_retries
+
+    def test_no_trace_row_when_disabled(self, monkeypatch, tmp_path):
+        """With trace_logging=False, no row is written to analysis_traces."""
+        self._stub_deps(monkeypatch)
+
+        def spy_ollama(cfg, prompt, image_paths=None, **kwargs):
+            return self._VALID_RESPONSE
+
+        monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy_ollama)
+
+        db = self._make_db()
+        run_analysis(
+            self._make_cfg(trace_logging=False), db,
+            prefetched_events=[],
+            prefetched_screenshots=None,
+        )
+
+        trace_rows = db.execute("SELECT id FROM analysis_traces").fetchall()
+        assert len(trace_rows) == 0

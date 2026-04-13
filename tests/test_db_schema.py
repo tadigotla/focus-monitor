@@ -114,6 +114,40 @@ def test_init_db_is_idempotent(tmp_home):
         db2.close()
 
 
+def test_init_db_creates_analysis_traces_table(tmp_home):
+    db = init_db()
+    try:
+        assert _table_exists(db, "analysis_traces")
+        cols = set(_column_names(db, "analysis_traces"))
+        expected = {
+            "id", "activity_log_id", "created_at",
+            "pass1_prompts_json", "pass1_responses_json",
+            "pass1_elapsed_ms_json",
+            "pass2_prompt", "pass2_response_raw", "pass2_elapsed_ms",
+            "few_shot_ids_json", "screenshot_paths_json",
+            "parse_retries",
+        }
+        assert expected <= cols
+    finally:
+        db.close()
+
+
+def test_analysis_traces_indexes_present(tmp_home):
+    db = init_db()
+    try:
+        indexes = {
+            row[0]
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND tbl_name='analysis_traces'"
+            ).fetchall()
+        }
+        assert "idx_traces_activity_log_id" in indexes
+        assert "idx_traces_created_at" in indexes
+    finally:
+        db.close()
+
+
 def test_corrections_indexes_present(tmp_home):
     db = init_db()
     try:

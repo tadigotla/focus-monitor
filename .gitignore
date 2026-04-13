@@ -60,6 +60,10 @@ coverage.xml
 /.focus-monitor
 .focus-monitor/
 
+# ---- Scope companion (React + Vite) ----
+scope/ui/node_modules/
+scope/ui/dist/
+
 # ---- Logs and temp ----
 *.log
 *.tmp

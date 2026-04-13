@@ -82,6 +82,31 @@ def init_db():
         "ON sessions (start, end)"
     )
     db.execute("""
+        CREATE TABLE IF NOT EXISTS analysis_traces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_log_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            pass1_prompts_json TEXT,
+            pass1_responses_json TEXT,
+            pass1_elapsed_ms_json TEXT,
+            pass2_prompt TEXT,
+            pass2_response_raw TEXT,
+            pass2_elapsed_ms REAL,
+            few_shot_ids_json TEXT,
+            screenshot_paths_json TEXT,
+            parse_retries INTEGER DEFAULT 0,
+            FOREIGN KEY (activity_log_id) REFERENCES activity_log(id)
+        )
+    """)
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_traces_activity_log_id "
+        "ON analysis_traces (activity_log_id)"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_traces_created_at "
+        "ON analysis_traces (created_at)"
+    )
+    db.execute("""
         CREATE TABLE IF NOT EXISTS pending_data (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             collected_at TEXT NOT NULL,

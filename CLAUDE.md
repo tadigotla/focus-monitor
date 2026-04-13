@@ -132,6 +132,34 @@ would defeat the privacy invariant. To add an MCP server, update this file
 *and* add a "Privacy impact" section to the openspec proposal that introduces
 it.
 
+## Scope — AI Decision Inspector
+
+Scope is a companion subsystem for inspecting and learning from the AI's
+decision-making. It is **not** part of the Pulse runtime — Pulse never imports
+from Scope, and Scope only reads from the shared SQLite DB.
+
+**Naming convention:**
+- **Pulse** — the main focus-monitor system (`focusmonitor/`)
+- **Scope** — the learning companion (`scope/`)
+
+**Where things live:**
+- `scope/api/` — Python read-only JSON API server (stdlib `http.server`)
+- `scope/ui/` — React + Vite frontend (planned, Phase 3+)
+- `scope_api.py` — top-level entrypoint for the API server
+
+**Coupling boundary:**
+- Pulse writes to `analysis_traces` and the existing tables. Scope reads them.
+- Scope never writes to the DB. If Scope crashes, Pulse doesn't notice.
+- The Scope API binds to `127.0.0.1:9877` (configurable via `scope_api_port`).
+
+**Dev setup for Scope UI (one-time, same class as pip install):**
+```
+cd scope/ui && npm install
+```
+This is a developer-machine action that pulls from npm. It is **not** a
+runtime dependency and is never invoked by Pulse. `scope/ui/node_modules/`
+and `scope/ui/dist/` are in `.gitignore`.
+
 ## OpenSpec workflow
 
 Changes to the project follow a structured propose → design → implement →
