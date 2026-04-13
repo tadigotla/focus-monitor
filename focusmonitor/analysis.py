@@ -284,7 +284,8 @@ def extract_screenshot_artifacts(cfg, screenshots):
     """
     artifacts = []
     for path in screenshots:
-        raw = query_ollama(cfg, _EXTRACTION_PROMPT, image_paths=[path])
+        raw = query_ollama(cfg, _EXTRACTION_PROMPT, image_paths=[path],
+                          temperature=0.0, format_="json")
         parsed = parse_analysis_json(raw) if raw else None
         artifact = _coerce_artifact(parsed, raw)
         artifacts.append(artifact)
@@ -572,7 +573,7 @@ def run_analysis(cfg, db, *, prefetched_events=None, prefetched_screenshots=None
                 history_text, screenshot_descriptions=descriptions,
                 corrections=few_shot_corrections,
             )
-        raw = query_ollama(cfg, prompt)
+        raw = query_ollama(cfg, prompt, temperature=0.0, format_="json")
     else:
         prompt = build_classification_prompt(
             cfg, app_summary, title_summary, task_list, history_text,

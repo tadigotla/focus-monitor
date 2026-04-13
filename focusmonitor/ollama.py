@@ -10,7 +10,7 @@ def encode_image(path):
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def query_ollama(cfg, prompt, image_paths=None):
+def query_ollama(cfg, prompt, image_paths=None, *, temperature=None, format_=None):
     """Send a prompt (+ optional images) to Ollama and return the text."""
     url = f"{cfg['ollama_url']}/api/generate"
     payload = {
@@ -21,6 +21,10 @@ def query_ollama(cfg, prompt, image_paths=None):
     }
     if image_paths:
         payload["images"] = [encode_image(p) for p in image_paths]
+    if temperature is not None:
+        payload["options"] = {"temperature": temperature}
+    if format_ is not None:
+        payload["format"] = format_
 
     data = json.dumps(payload).encode()
     req = Request(url, data=data, headers={"Content-Type": "application/json"})

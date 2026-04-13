@@ -189,3 +189,43 @@ class TestQueryOllamaPayload:
         query_ollama(cfg, "test prompt")
 
         assert captured["body"]["keep_alive"] == "5m"
+
+    def test_temperature_and_format_included_when_provided(self, monkeypatch):
+        """temperature and format appear in payload when passed."""
+        import focusmonitor.ollama as ollama_mod
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data)
+            import io
+            resp = io.BytesIO(json.dumps({"response": "ok"}).encode())
+            return resp
+
+        monkeypatch.setattr(ollama_mod, "urlopen", fake_urlopen)
+
+        cfg = DEFAULT_CONFIG.copy()
+        query_ollama(cfg, "test prompt", temperature=0.0, format_="json")
+
+        assert captured["body"]["options"] == {"temperature": 0.0}
+        assert captured["body"]["format"] == "json"
+
+    def test_temperature_and_format_omitted_when_none(self, monkeypatch):
+        """Neither options nor format key present when args are None."""
+        import focusmonitor.ollama as ollama_mod
+
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data)
+            import io
+            resp = io.BytesIO(json.dumps({"response": "ok"}).encode())
+            return resp
+
+        monkeypatch.setattr(ollama_mod, "urlopen", fake_urlopen)
+
+        cfg = DEFAULT_CONFIG.copy()
+        query_ollama(cfg, "test prompt")
+
+        assert "options" not in captured["body"]
+        assert "format" not in captured["body"]

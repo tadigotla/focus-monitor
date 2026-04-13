@@ -27,6 +27,7 @@ from focusmonitor.analysis import (
     extract_screenshot_artifacts,
     parse_analysis_json,
     render_few_shot_corrections,
+    run_analysis,
     validate_analysis_result,
 )
 from focusmonitor.config import DEFAULT_CONFIG
@@ -358,6 +359,21 @@ class TestExtractScreenshotArtifacts:
         assert result["browser_url"] is None
         assert result["browser_tab_titles"] == ["tab a", "7", "tab b"]
         assert result["one_line_action"] == "raw text"
+
+    def test_passes_temperature_and_format_to_ollama(self, monkeypatch):
+        """Pass 1 extraction must request temperature=0 and format=json."""
+        captured_kwargs = {}
+
+        def spy(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return json.dumps({"one_line_action": "testing"})
+
+        monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy)
+        fixture = FIXTURE_DIR / "screen_20260412_100000.png"
+        extract_screenshot_artifacts(self._make_cfg(), [fixture])
+
+        assert captured_kwargs.get("temperature") == 0.0
+        assert captured_kwargs.get("format_") == "json"
 
 
 # ── validate_analysis_result ─────────────────────────────────────────────────
@@ -871,3 +887,131 @@ class TestDefaultConfig:
     def test_activitywatch_url_is_localhost(self):
         """Privacy invariant: ActivityWatch must target localhost."""
         assert "localhost" in DEFAULT_CONFIG["activitywatch_url"] or "127.0.0.1" in DEFAULT_CONFIG["activitywatch_url"]
+
+
+# ── run_analysis: temperature and format kwargs ──────────────────────────────
+
+class TestRunAnalysisOllamaKwargs:
+    """Verify that run_analysis passes temperature/format to query_ollama
+    in the two-pass path and does NOT in the single-pass fallback."""
+
+    _VALID_RESPONSE = json.dumps({
+        "projects": ["test"],
+        "planned_match": [],
+        "distractions": [],
+        "summary": "testing",
+        "focus_score": 50,
+        "task": "test",
+        "evidence": [],
+        "boundary_confidence": "medium",
+        "name_confidence": "medium",
+        "needs_user_input": False,
+    })
+
+    def _make_cfg(self, two_pass=True):
+        cfg = DEFAULT_CONFIG.copy()
+        cfg["two_pass_analysis"] = two_pass
+        cfg["pass1_structured"] = True
+        cfg["analysis_interval_sec"] = 300
+        cfg["history_window"] = 0
+        cfg["session_aggregation_enabled"] = False
+        return cfg
+
+    def _stub_deps(self, monkeypatch):
+        """Stub everything run_analysis touches except query_ollama."""
+        monkeypatch.setattr(
+            "focusmonitor.analysis.get_aw_events", lambda *a, **kw: []
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.summarize_aw_events",
+            lambda events: ([], []),
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.load_planned_tasks", lambda: []
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.recent_corrections", lambda *a, **kw: []
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.deduplicate_screenshots",
+            lambda paths, pct: paths,
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.update_discovered_activities",
+            lambda *a: None,
+        )
+        monkeypatch.setattr(
+            "focusmonitor.analysis.check_nudges", lambda *a: None
+        )
+
+    def test_two_pass_sends_temperature_and_format(self, monkeypatch, tmp_path):
+        """Both Pass 1 and Pass 2 calls must include temperature=0.0
+        and format_='json' when two_pass_analysis is true."""
+        self._stub_deps(monkeypatch)
+
+        calls = []
+
+        def spy_ollama(cfg, prompt, image_paths=None, **kwargs):
+            calls.append(kwargs.copy())
+            return self._VALID_RESPONSE
+
+        monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy_ollama)
+
+        # Create a fake screenshot so Pass 1 fires
+        fake_screenshot = tmp_path / "screen.png"
+        fake_screenshot.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+        import sqlite3
+        db = sqlite3.connect(":memory:")
+        db.execute(
+            "CREATE TABLE activity_log (id INTEGER PRIMARY KEY, "
+            "timestamp TEXT, window_titles TEXT, apps_used TEXT, "
+            "project_detected TEXT, is_distraction INTEGER, "
+            "summary TEXT, raw_response TEXT)"
+        )
+
+        run_analysis(
+            self._make_cfg(two_pass=True), db,
+            prefetched_events=[],
+            prefetched_screenshots=[fake_screenshot],
+        )
+
+        # Pass 1 (extraction) + Pass 2 (classification) = at least 2 calls
+        assert len(calls) >= 2
+        # Pass 1 call
+        assert calls[0].get("temperature") == 0.0
+        assert calls[0].get("format_") == "json"
+        # Pass 2 call (last call before any retries)
+        assert calls[1].get("temperature") == 0.0
+        assert calls[1].get("format_") == "json"
+
+    def test_single_pass_omits_temperature_and_format(self, monkeypatch, tmp_path):
+        """Legacy single-pass path must NOT set temperature or format."""
+        self._stub_deps(monkeypatch)
+
+        calls = []
+
+        def spy_ollama(cfg, prompt, image_paths=None, **kwargs):
+            calls.append(kwargs.copy())
+            return self._VALID_RESPONSE
+
+        monkeypatch.setattr("focusmonitor.analysis.query_ollama", spy_ollama)
+
+        import sqlite3
+        db = sqlite3.connect(":memory:")
+        db.execute(
+            "CREATE TABLE activity_log (id INTEGER PRIMARY KEY, "
+            "timestamp TEXT, window_titles TEXT, apps_used TEXT, "
+            "project_detected TEXT, is_distraction INTEGER, "
+            "summary TEXT, raw_response TEXT)"
+        )
+
+        run_analysis(
+            self._make_cfg(two_pass=False), db,
+            prefetched_events=[],
+            prefetched_screenshots=None,
+        )
+
+        assert len(calls) >= 1
+        assert "temperature" not in calls[0]
+        assert "format_" not in calls[0]
