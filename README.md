@@ -54,31 +54,37 @@ nothing.
 git clone https://github.com/tadigotla/focus-monitor.git
 cd focus-monitor
 
-# 2. Run setup. This probes Ollama + ActivityWatch, scaffolds
-#    ~/.focus-monitor/ with default config, and writes the launchd plist.
-#    If either service is down or missing, setup prints the exact fix-it
-#    command — re-run setup after fixing.
+# 2. Run setup. This probes Ollama + ActivityWatch and scaffolds
+#    ~/.focus-monitor/ with default config. If either service is down
+#    or missing, setup prints the exact fix-it command — re-run setup
+#    after fixing. setup.py does NOT write the launchd plist; that's
+#    owned by `cli.py service install` in step 6.
 python3 setup.py
 
 # 3. Edit your planned tasks.
 nano ~/.focus-monitor/planned_tasks.json
 
-# 4. Test manually first (also serves the live dashboard).
-python3 cli.py run
+# 4. Test in the foreground (starts Pulse + Scope, embeds the dashboard).
+#    Ctrl-C tears both down.
+python3 cli.py start
 
-# 5. Open the dashboard in your browser while the monitor is running.
+# 5. Open the dashboard in your browser while focus-monitor is running.
 open http://localhost:9876
 
-# 6. Once happy, load the background agent so it runs at login.
-launchctl load ~/Library/LaunchAgents/com.focusmonitor.agent.plist
+# 6. Once happy, install and start the background services so they run at login.
+python3 cli.py service install
+python3 cli.py service start
 
-# To stop it later:
-launchctl unload ~/Library/LaunchAgents/com.focusmonitor.agent.plist
+# To stop them later:
+python3 cli.py service stop
+
+# To see per-component state:
+python3 cli.py service status
 ```
 
 ### Verifying your install
 
-After `setup.py` reports everything green and `cli.py run` is alive
+After `setup.py` reports everything green and `cli.py start` is alive
 for at least one analysis interval (~30 minutes by default, or edit
 `~/.focus-monitor/config.json` to lower `analysis_interval_sec`), run
 these quick checks:
@@ -90,18 +96,51 @@ curl -s http://localhost:11434/api/tags | grep llama3.2-vision
 # 2. ActivityWatch is reachable and in production mode.
 curl -s http://localhost:5600/api/0/info
 
-# 3. An activity row has landed in the database.
+# 3. Pulse's dashboard is reachable.
+curl -s http://localhost:9876 | head -1
+
+# 4. Scope's API is reachable.
+curl -s http://localhost:9877/api/health
+
+# 5. An activity row has landed in the database.
 sqlite3 ~/.focus-monitor/activity.db \
   "SELECT timestamp, substr(summary, 1, 60) FROM activity_log ORDER BY timestamp DESC LIMIT 5;" \
   2>/dev/null || echo "No rows yet — wait for the first analysis tick."
 
-# 4. (Optional, for contributors) Run the pytest suite — fully offline,
+# 6. (Optional, for contributors) Run the pytest suite — fully offline,
 #    requires the dev venv set up via the Contributing section below.
 .venv/bin/pytest tests/
 ```
 
-If steps 1 and 2 return data but step 3 is empty, `cli.py run` hasn't
+If steps 1 and 2 return data but step 5 is empty, `cli.py start` hasn't
 reached its first analysis tick yet — leave it running and try again.
+
+## Upgrading from the old launchd agent
+
+If you installed focus-monitor before the `cli.py service` verbs
+existed, your `~/Library/LaunchAgents/` still has
+`com.focusmonitor.agent.plist` pointing at the deleted `monitor.py`.
+launchd will respawn-loop that plist on every pull until you remove
+it. Run these commands **before** the usual upgrade steps:
+
+```bash
+# 1. Unload the legacy agent (bootout is preferred on modern macOS).
+launchctl bootout gui/$(id -u)/com.focusmonitor.agent 2>/dev/null || \
+  launchctl unload ~/Library/LaunchAgents/com.focusmonitor.agent.plist
+
+# 2. Remove the legacy plist file.
+rm ~/Library/LaunchAgents/com.focusmonitor.agent.plist
+
+# 3. Install the new per-component plists and start them.
+python3 cli.py service install
+python3 cli.py service start
+```
+
+There is no automatic migration. The manual recipe is a deliberate
+choice — the upgrade touches user-shared launchd state, and the
+explicit commands are auditable and reversible. `cli.py service
+install` will detect the legacy plist if you forget and print the
+same recipe.
 
 ## How It Works
 
@@ -159,9 +198,16 @@ Or run the bundled `privacy-review` agent skill over the tree — see [`.claude/
 **How to wipe all your data:**
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.focusmonitor.agent.plist 2>/dev/null
+# Primary path: use the CLI (stops and removes both plists).
+python3 cli.py service uninstall
 rm -rf ~/.focus-monitor/
-rm -f ~/Library/LaunchAgents/com.focusmonitor.agent.plist
+
+# Fallback, if you can't run cli.py:
+launchctl bootout gui/$(id -u)/com.focusmonitor.pulse 2>/dev/null
+launchctl bootout gui/$(id -u)/com.focusmonitor.scope 2>/dev/null
+rm -f ~/Library/LaunchAgents/com.focusmonitor.pulse.plist
+rm -f ~/Library/LaunchAgents/com.focusmonitor.scope.plist
+rm -rf ~/.focus-monitor/
 ```
 
 That removes every byte Focus Monitor has stored about you.

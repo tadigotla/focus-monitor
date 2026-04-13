@@ -22,21 +22,6 @@ Each module SHALL contain only functions related to its functional area. No modu
 - **WHEN** any module needs a path constant (DB_PATH, SCREENSHOT_DIR, etc.)
 - **THEN** it imports it from `focusmonitor.config`, not from any other module
 
-### Requirement: Backward-compatible entry points
-The system SHALL maintain backward-compatible entry points so existing launchd plists and scripts continue to work.
-
-#### Scenario: monitor.py still works
-- **WHEN** a user runs `python3 monitor.py`
-- **THEN** the monitor starts normally (thin wrapper that calls `focusmonitor.main.main()`)
-
-#### Scenario: cli.py still works
-- **WHEN** a user runs `python3 cli.py run`
-- **THEN** the CLI dispatches correctly using imports from the `focusmonitor` package
-
-#### Scenario: dashboard.py standalone still works
-- **WHEN** a user runs `python3 dashboard.py` directly (at root level)
-- **THEN** it opens the dashboard in the browser (thin wrapper)
-
 ### Requirement: All existing tests pass
 The system SHALL pass all existing tests after the refactor with only import path changes in test files.
 

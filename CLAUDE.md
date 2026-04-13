@@ -31,7 +31,14 @@ entire product promise — treat it as a hard invariant, not a nice-to-have.
 - `focusmonitor/static/` — vendored browser assets (htmx). Served locally
   because the no-CDN network policy forbids loading scripts from the internet.
   `PROVENANCE.md` tracks origin, version, and SHA256 for each file.
-- `monitor.py`, `dashboard.py`, `cli.py`, `setup.py` — top-level entrypoints.
+- `cli.py`, `setup.py`, `scope_api.py` — top-level entrypoints. `cli.py`
+  is the canonical CLI (`start`, `stop`, `service`, `setup`); `scope_api.py`
+  is a back-compat shim for `python -m scope.api`. The launchd services
+  target `bin/focusmonitor-service`, a POSIX shell shim that re-resolves
+  python at every invocation and dispatches into `cli.py`.
+- `bin/focusmonitor-service` — the launchd shim (see above). If you
+  change its resolution order, re-run `python3 cli.py service install`
+  on any developer machine to regenerate the plists.
 - `tests/` — pytest suite. Subdirectory layout:
   - `tests/test_*.py` — test files (pytest discovers these)
   - `tests/conftest.py` — `tmp_home`, `freeze_clock`, `pytest-socket` guard

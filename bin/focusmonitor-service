@@ -1,0 +1,39 @@
+#!/bin/sh
+# focusmonitor-service — launchd shim that re-resolves python at every
+# invocation so brew/pyenv upgrades do not strand the service on a stale
+# interpreter. Managed by `cli.py service install`; do not edit plists by
+# hand.
+#
+# Resolution order:
+#   1. <REPO_ROOT>/.venv/bin/python3   (if present and executable)
+#   2. `command -v python3`            (against launchd's PATH)
+#   3. /opt/homebrew/bin/python3       (Apple Silicon brew default)
+#   4. /usr/bin/python3                (macOS stock)
+#
+# The chosen interpreter is logged to stderr as a single line so a
+# respawn-loop shows up with a visible cause in ~/.focus-monitor/logs/*.err.log.
+#
+# Privacy: this script contains no network calls. Do not add any.
+
+set -eu
+
+SHIM_PATH=$(cd "$(dirname "$0")" && pwd)
+REPO_ROOT=$(cd "$SHIM_PATH/.." && pwd)
+
+PY=""
+if [ -x "$REPO_ROOT/.venv/bin/python3" ]; then
+    PY="$REPO_ROOT/.venv/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+    PY=$(command -v python3)
+elif [ -x /opt/homebrew/bin/python3 ]; then
+    PY=/opt/homebrew/bin/python3
+elif [ -x /usr/bin/python3 ]; then
+    PY=/usr/bin/python3
+else
+    echo "focusmonitor-service: no python3 interpreter found" >&2
+    exit 127
+fi
+
+echo "focusmonitor-service: resolved python=$PY" >&2
+
+exec "$PY" "$REPO_ROOT/cli.py" "$@"

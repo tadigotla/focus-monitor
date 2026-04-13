@@ -1,51 +1,16 @@
 #!/usr/bin/env python3
 """
-Setup script — creates the launchd plist so Focus Monitor runs automatically.
+Setup script — probes dependencies and scaffolds ~/.focus-monitor/.
+
 Run once: python3 setup.py
+
+This script no longer writes the launchd plist. Background-service
+management is owned by `python3 cli.py service install` / `service start`
+— see the README's Quick Start.
 """
 
-import subprocess
 import sys
 from pathlib import Path
-
-PLIST_NAME = "com.focusmonitor.agent"
-PLIST_DIR = Path.home() / "Library" / "LaunchAgents"
-PLIST_PATH = PLIST_DIR / f"{PLIST_NAME}.plist"
-MONITOR_SCRIPT = Path(__file__).parent / "monitor.py"
-LOG_DIR = Path.home() / ".focus-monitor" / "logs"
-
-
-def create_plist():
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    PLIST_DIR.mkdir(parents=True, exist_ok=True)
-
-    python = subprocess.run(["which", "python3"], capture_output=True, text=True).stdout.strip()
-
-    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{PLIST_NAME}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{python}</string>
-        <string>{MONITOR_SCRIPT.resolve()}</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{LOG_DIR / 'stdout.log'}</string>
-    <key>StandardErrorPath</key>
-    <string>{LOG_DIR / 'stderr.log'}</string>
-</dict>
-</plist>
-"""
-    PLIST_PATH.write_text(plist)
-    print(f"✅ Created {PLIST_PATH}")
 
 
 # Map probe states to the icon used in setup's console output.
@@ -92,32 +57,36 @@ def main():
     print("   System Settings → Privacy & Security → Screen Recording")
     print("   Add Terminal (or your terminal app) to the allowed list.\n")
 
-    create_plist()
-
     # Bootstrap ~/.focus-monitor/ with defaults so the user can edit
     # planned_tasks.json immediately after setup completes.
     from focusmonitor.config import load_config, TASKS_JSON_FILE
     load_config()
     print(f"  ✅ Scaffolded {TASKS_JSON_FILE.parent}")
 
-    cli_script = Path(__file__).parent / "cli.py"
+    # Warn about the legacy launchd agent if the user is upgrading.
+    from focusmonitor.service import legacy_plist_warning
+    warning = legacy_plist_warning()
+    if warning:
+        print(warning)
+
+    cli_script = (Path(__file__).parent / "cli.py").resolve()
     print(f"""
 Next steps:
   1. Edit your planned tasks:
      nano {TASKS_JSON_FILE}
 
-  2. Start the monitor manually first to test:
-     python3 {cli_script.resolve()} run
+  2. Run Focus Monitor in the foreground to test:
+     python3 {cli_script} start
 
-  3. Once happy, load the background agent:
-     launchctl load {PLIST_PATH}
+  3. Once happy, install and start the background services:
+     python3 {cli_script} service install
+     python3 {cli_script} service start
 
-  4. To stop it:
-     launchctl unload {PLIST_PATH}
+  4. To stop the background services later:
+     python3 {cli_script} service stop
 
-  5. View your dashboard anytime:
-     http://localhost:9876  (available when monitor is running)
-     python3 {cli_script.resolve()} dashboard  (standalone)
+  5. View your dashboard anytime Pulse is running:
+     http://localhost:9876
 """)
 
 

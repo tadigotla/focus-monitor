@@ -25,6 +25,20 @@ import pytest
 from focusmonitor import install as inst
 
 
+# ── setup.py no longer writes the launchd plist ──────────────────────────────
+
+def test_setup_py_does_not_define_create_plist():
+    """Regression guard: plist writing moved to `cli.py service install`."""
+    import importlib
+    setup = importlib.import_module("setup")
+    assert not hasattr(setup, "create_plist"), \
+        "setup.py must not expose create_plist; plist writing belongs to cli.py service install"
+    assert not hasattr(setup, "MONITOR_SCRIPT"), \
+        "setup.py must not reference monitor.py"
+    assert not hasattr(setup, "PLIST_PATH"), \
+        "setup.py must not reference a launchd plist path"
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 class _FakeResp:

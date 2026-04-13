@@ -32,8 +32,8 @@ For cassette re-record: "Re-record the Ollama cassettes" or
 
 ## What to do (default: run + report)
 
-1. Confirm you are at the repo root (directory containing `monitor.py`,
-   `dashboard.py`, `setup.py`, and the `focusmonitor/` package).
+1. Confirm you are at the repo root (directory containing `cli.py`,
+   `setup.py`, and the `focusmonitor/` package).
 2. Confirm `.venv/bin/pytest` exists. If not, report "dev venv not set up;
    run `python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`"
    and stop. Never run the install yourself.

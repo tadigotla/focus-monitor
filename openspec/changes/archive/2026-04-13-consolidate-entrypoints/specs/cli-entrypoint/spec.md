@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Unified CLI with subcommands
 The system SHALL provide a single CLI entry point (`cli.py`) with subcommands that replace direct script invocation. The canonical verbs are `start`, `stop`, `service`, and `setup`. The legacy verbs `run` and `dashboard` SHALL continue to work for one release cycle as deprecated aliases and SHALL print a one-line deprecation notice on stderr before dispatching.
@@ -57,6 +57,8 @@ The dashboard HTTP server SHALL be reachable at `http://localhost:9876` whenever
 - **WHEN** Pulse is not running in any mode
 - **THEN** `http://localhost:9876` is not reachable
 - **AND** the CLI does not offer a "dashboard-only" verb
+
+## ADDED Requirements
 
 ### Requirement: Foreground supervision tears down both children on Ctrl-C
 When `cli.py start` is running both components as children in the foreground, it SHALL install signal handlers such that `SIGINT` (Ctrl-C) and `SIGTERM` propagate to both children, wait up to a bounded timeout for clean exit, then `SIGKILL` any survivor before the parent exits.
